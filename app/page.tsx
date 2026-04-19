@@ -9,6 +9,7 @@ import { DeckSelector } from "./components/DeckSelector";
 import { CardHover } from "./components/CardHover";
 import { CardDetail } from "./components/CardDetail";
 import { ExportButton } from "./components/ExportButton";
+import { ImportButton } from "./components/ImportButton";
 import type { ScryfallCard } from "./lib/types";
 import { getCardById } from "./lib/scryfall";
 
@@ -84,6 +85,13 @@ export default function Home() {
       // ignore — deck tile remains clickable but we silently fail the fetch
     }
   }, []);
+
+  const activeIdForPrices = decks.activeId;
+  const refreshPricesFn = decks.refreshPrices;
+  const handleRefreshPrices = useCallback(() => {
+    if (!activeIdForPrices) return;
+    refreshPricesFn(activeIdForPrices);
+  }, [activeIdForPrices, refreshPricesFn]);
 
   const { undo, redo, canUndo, canRedo } = decks;
 
@@ -178,6 +186,14 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-1">
+          {active && (
+            <ImportButton
+              onImport={(entries, mode) =>
+                decks.importEntries(active.id, entries, mode)
+              }
+              onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
+            />
+          )}
           {active && (
             <ExportButton
               deck={active}
@@ -279,6 +295,7 @@ export default function Home() {
                 }
                 onHover={(h) => setHover(h)}
                 onSelect={handleDeckCardClick}
+                onRefreshPrices={handleRefreshPrices}
               />
             ) : (
               <div className="flex h-full items-center justify-center p-8 text-sm text-text-subtle">

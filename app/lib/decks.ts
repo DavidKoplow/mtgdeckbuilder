@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Deck, DeckEntry, ScryfallCard } from "./types";
-import { getCardImage } from "./scryfall";
+import { getCardImage, getCardsByIdentifiers } from "./scryfall";
 
 const STORAGE_KEY = "deckwright:decks:v1";
 const ACTIVE_KEY = "deckwright:active-deck:v1";
@@ -61,6 +61,8 @@ function writeActiveId(id: string | null) {
 }
 
 export function cardToEntry(card: ScryfallCard, quantity = 1): DeckEntry {
+  const usd = card.prices?.usd;
+  const priceUsd = usd != null && usd !== "" ? Number(usd) : undefined;
   return {
     cardId: card.id,
     name: card.name,
@@ -73,6 +75,7 @@ export function cardToEntry(card: ScryfallCard, quantity = 1): DeckEntry {
     colors: card.colors,
     set: card.set,
     collectorNumber: card.collector_number,
+    priceUsd: Number.isFinite(priceUsd) ? priceUsd : undefined,
   };
 }
 
@@ -237,6 +240,68 @@ export function useDecks() {
     [commit]
   );
 
+  const importEntries = useCallback(
+    (deckId: string, incoming: DeckEntry[], mode: "merge" | "replace") => {
+      const next = decksRef.current.map((d) => {
+        if (d.id !== deckId) return d;
+        if (mode === "replace") {
+          return { ...d, entries: incoming, updatedAt: Date.now() };
+        }
+        const byId = new Map(d.entries.map((e) => [e.cardId, { ...e }]));
+        for (const e of incoming) {
+          const existing = byId.get(e.cardId);
+          if (existing) {
+            existing.quantity += e.quantity;
+          } else {
+            byId.set(e.cardId, { ...e });
+          }
+        }
+        return { ...d, entries: Array.from(byId.values()), updatedAt: Date.now() };
+      });
+      commit(next, activeRef.current);
+    },
+    [commit]
+  );
+
+  // Silent (no history) price backfill — prices change over time and users
+  // don't expect undo to revert them. Only touches entries that need it.
+  const refreshPrices = useCallback(async (deckId: string) => {
+    const deck = decksRef.current.find((d) => d.id === deckId);
+    if (!deck) return;
+    const needIds = deck.entries
+      .filter((e) => e.priceUsd === undefined)
+      .map((e) => e.cardId);
+    if (needIds.length === 0) return;
+    try {
+      const cards = await getCardsByIdentifiers(
+        needIds.map((id) => ({ id }))
+      );
+      if (cards.length === 0) return;
+      const priceById = new Map<string, number | undefined>();
+      for (const c of cards) {
+        const raw = c.prices?.usd;
+        const n = raw != null && raw !== "" ? Number(raw) : undefined;
+        priceById.set(c.id, Number.isFinite(n) ? n : undefined);
+      }
+      const current = decksRef.current;
+      const patched = current.map((d) => {
+        if (d.id !== deckId) return d;
+        let touched = false;
+        const entries = d.entries.map((e) => {
+          if (e.priceUsd !== undefined) return e;
+          if (!priceById.has(e.cardId)) return e;
+          touched = true;
+          return { ...e, priceUsd: priceById.get(e.cardId) };
+        });
+        return touched ? { ...d, entries } : d;
+      });
+      setDecks(patched);
+      writeDecks(patched);
+    } catch {
+      // Network errors: silently leave prices unknown.
+    }
+  }, []);
+
   const undo = useCallback(() => {
     setPast((p) => {
       if (p.length === 0) return p;
@@ -287,6 +352,8 @@ export function useDecks() {
     addCard,
     setQuantity,
     clearDeck,
+    importEntries,
+    refreshPrices,
     undo,
     redo,
     canUndo: past.length > 0,

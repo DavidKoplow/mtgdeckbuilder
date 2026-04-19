@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Deck, DeckEntry } from "../lib/types";
 import { ManaCost } from "./ManaCost";
 
@@ -13,6 +13,7 @@ type Props = {
   onSelect: (cardId: string) => void;
   /** Scryfall card id — tile/row is highlighted when it matches the preview pane */
   previewCardId?: string | null;
+  onRefreshPrices?: () => void;
 };
 
 type ViewMode = "grid" | "list";
@@ -42,6 +43,7 @@ export function DeckPanel({
   onHover,
   onSelect,
   previewCardId = null,
+  onRefreshPrices,
 }: Props) {
   const [view, setView] = useState<ViewMode>("grid");
 
@@ -54,7 +56,22 @@ export function DeckPanel({
     window.localStorage.setItem(VIEW_KEY, view);
   }, [view]);
 
-  const { groups, totalCount, curve, colorPips } = useMemo(() => {
+  // Track which card IDs we've already tried to price in this session so we
+  // don't spam Scryfall for cards that genuinely have no listed USD price.
+  const triedPriceRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!onRefreshPrices) return;
+    const novel = deck.entries.some(
+      (e) => e.priceUsd === undefined && !triedPriceRef.current.has(e.cardId)
+    );
+    if (!novel) return;
+    for (const e of deck.entries) {
+      if (e.priceUsd === undefined) triedPriceRef.current.add(e.cardId);
+    }
+    onRefreshPrices();
+  }, [deck.entries, onRefreshPrices]);
+
+  const { groups, totalCount, curve, colorPips, totalPrice, topExpensive, pricedCount } = useMemo(() => {
     const groups = new Map<string, DeckEntry[]>();
     for (const e of deck.entries) {
       const g = groupOf(e);
@@ -93,15 +110,43 @@ export function DeckPanel({
       }
     }
 
-    return { groups: ordered, totalCount, curve: curveBuckets, colorPips };
+    let totalPrice = 0;
+    let pricedCount = 0;
+    for (const e of deck.entries) {
+      if (typeof e.priceUsd === "number") {
+        totalPrice += e.priceUsd * e.quantity;
+        pricedCount += e.quantity;
+      }
+    }
+    const topExpensive = deck.entries
+      .filter((e) => typeof e.priceUsd === "number")
+      .slice()
+      .sort((a, b) => (b.priceUsd ?? 0) - (a.priceUsd ?? 0))
+      .slice(0, 3);
+
+    return {
+      groups: ordered,
+      totalCount,
+      curve: curveBuckets,
+      colorPips,
+      totalPrice,
+      topExpensive,
+      pricedCount,
+    };
   }, [deck.entries]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-4 border-b border-border bg-surface px-4 py-2 text-xs text-text-muted">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-2 text-xs text-text-muted">
         <span className="font-medium text-text">{totalCount} cards</span>
         <ColorBar pips={colorPips} />
         <ManaCurve curve={curve} />
+        <PriceSummary
+          totalPrice={totalPrice}
+          topExpensive={topExpensive}
+          totalCount={totalCount}
+          pricedCount={pricedCount}
+        />
         <ViewToggle view={view} onChange={setView} />
       </div>
 
@@ -382,6 +427,81 @@ function DeckRow({
         </button>
       </div>
     </li>
+  );
+}
+
+function formatUsd(n: number): string {
+  return `$${n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function PriceSummary({
+  totalPrice,
+  topExpensive,
+  totalCount,
+  pricedCount,
+}: {
+  totalPrice: number;
+  topExpensive: DeckEntry[];
+  totalCount: number;
+  pricedCount: number;
+}) {
+  if (totalCount === 0) return null;
+  const partial = pricedCount < totalCount;
+  const label = pricedCount === 0 ? "Price —" : `≈ ${formatUsd(totalPrice)}`;
+  const title =
+    pricedCount === 0
+      ? "Prices not yet loaded"
+      : partial
+        ? `${pricedCount}/${totalCount} cards priced — total excludes unpriced cards`
+        : "Estimated total deck price (USD, Scryfall)";
+  return (
+    <div className="group relative">
+      <span
+        className="cursor-default rounded-md bg-surface-subtle px-2 py-0.5 font-medium tabular-nums text-text"
+        title={title}
+      >
+        {label}
+        {partial && pricedCount > 0 ? (
+          <span className="ml-1 text-text-subtle">*</span>
+        ) : null}
+      </span>
+      {topExpensive.length > 0 && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-max min-w-[14rem] rounded-md border border-border bg-white p-2 shadow-lg group-hover:block"
+        >
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+            Top {topExpensive.length} priciest
+          </div>
+          <ul className="space-y-0.5">
+            {topExpensive.map((e) => (
+              <li
+                key={e.cardId}
+                className="flex items-baseline justify-between gap-4 text-[11px]"
+              >
+                <span className="truncate text-text">
+                  {e.name}
+                  {e.quantity > 1 ? (
+                    <span className="ml-1 text-text-subtle">×{e.quantity}</span>
+                  ) : null}
+                </span>
+                <span className="tabular-nums text-text-muted">
+                  {formatUsd(e.priceUsd ?? 0)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {partial && (
+            <div className="mt-1 border-t border-border pt-1 text-[10px] text-text-subtle">
+              {pricedCount}/{totalCount} cards priced
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

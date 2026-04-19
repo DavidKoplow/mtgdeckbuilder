@@ -43,6 +43,7 @@ export type AdvancedFilters = {
   text?: string;
   name?: string;
   oracle?: string;
+  excludeOracle?: string;
   type?: string;
   colors?: string[]; // W U B R G
   colorMode?: "exact" | "including" | "at-most" | "identity";
@@ -63,6 +64,15 @@ export function buildQuery(f: AdvancedFilters): string {
   if (f.text?.trim()) parts.push(f.text.trim());
   if (f.name?.trim()) parts.push(`name:"${escapeTerm(f.name.trim())}"`);
   if (f.oracle?.trim()) parts.push(`o:"${escapeTerm(f.oracle.trim())}"`);
+  if (f.excludeOracle?.trim()) {
+    // Comma-separated terms each become a negated oracle clause, so users can
+    // exclude multiple words in one field (e.g. "exile, sacrifice").
+    const terms = f.excludeOracle
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    for (const t of terms) parts.push(`-o:"${escapeTerm(t)}"`);
+  }
   if (f.type?.trim()) parts.push(`t:${escapeTerm(f.type.trim())}`);
   if (f.colors && f.colors.length) {
     const sym = f.colors.join("").toLowerCase();
@@ -158,6 +168,45 @@ export async function getCardById(
     if (res.status === 404) return null;
     return jsonOrThrow<ScryfallCard>(res);
   });
+}
+
+export type CollectionIdentifier =
+  | { id: string }
+  | { name: string }
+  | { name: string; set: string }
+  | { collector_number: string; set: string };
+
+type CollectionResponse = {
+  object: "list";
+  not_found: unknown[];
+  data: ScryfallCard[];
+};
+
+/**
+ * POST /cards/collection — fetch up to 75 cards per call. Batches automatically.
+ * Ignores any identifiers Scryfall couldn't resolve.
+ */
+export async function getCardsByIdentifiers(
+  identifiers: CollectionIdentifier[],
+  signal?: AbortSignal
+): Promise<ScryfallCard[]> {
+  if (identifiers.length === 0) return [];
+  const BATCH = 75;
+  const out: ScryfallCard[] = [];
+  for (let i = 0; i < identifiers.length; i += BATCH) {
+    const batch = identifiers.slice(i, i + BATCH);
+    const body = await throttled(async () => {
+      const res = await fetch(`${API}/cards/collection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifiers: batch }),
+        signal,
+      });
+      return jsonOrThrow<CollectionResponse>(res);
+    });
+    out.push(...body.data);
+  }
+  return out;
 }
 
 export function getCardImage(

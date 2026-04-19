@@ -142,6 +142,15 @@ export function SearchPanel({
                 className="input"
               />
             </Field>
+            <Field label="Exclude rules text">
+              <input
+                type="text"
+                value={filters.excludeOracle ?? ""}
+                onChange={(e) => update("excludeOracle", e.target.value)}
+                placeholder="comma-separated, e.g. discard, exile"
+                className="input"
+              />
+            </Field>
             <Field label="Type line">
               <input
                 type="text"

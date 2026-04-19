@@ -87,6 +87,7 @@ export type DeckEntry = {
   colors?: string[];
   set?: string;
   collectorNumber?: string;
+  priceUsd?: number;
 };
 
 export type Deck = {
