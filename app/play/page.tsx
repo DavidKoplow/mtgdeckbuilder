@@ -32,7 +32,7 @@ function PlayPageContent() {
 
   if (!decks.hydrated) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-text-subtle">
+      <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-subtle">
         Loading…
       </div>
     );
@@ -40,7 +40,7 @@ function PlayPageContent() {
 
   if (!deckId) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
         <p>No deck selected.</p>
         <Link href="/" className="text-accent hover:underline">
           Back to builder
@@ -52,7 +52,7 @@ function PlayPageContent() {
   const deck = decks.decks.find((d) => d.id === deckId);
   if (!deck) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
         <p>Deck not found.</p>
         <Link href="/" className="text-accent hover:underline">
           Back to builder
@@ -63,7 +63,7 @@ function PlayPageContent() {
 
   if (deck.entries.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
         <p>This deck has no cards to play with.</p>
         <Link href="/" className="text-accent hover:underline">
           Back to builder
@@ -77,15 +77,19 @@ function PlayPageContent() {
 
 export default function PlayPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex flex-1 items-center justify-center text-sm text-text-subtle">
-          Loading…
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Suspense
+        fallback={
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-subtle">
+            Loading…
+          </div>
+        }
+      >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <PlayPageContent />
         </div>
-      }
-    >
-      <PlayPageContent />
-    </Suspense>
+      </Suspense>
+    </div>
   );
 }
 
@@ -103,7 +107,7 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
   }
 
   return (
-    <div className="flex h-screen flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2">
         <div className="flex items-center gap-2">
           <Link

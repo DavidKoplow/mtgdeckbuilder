@@ -121,7 +121,7 @@ export default function Home() {
 
   if (!decks.hydrated) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-text-subtle">
+      <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-subtle">
         Loading…
       </div>
     );
@@ -130,7 +130,7 @@ export default function Home() {
   const active = decks.activeDeck;
 
   return (
-    <div className="flex h-screen flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
         <div className="flex items-center gap-2">
           <button
@@ -229,10 +229,11 @@ export default function Home() {
         className="flex min-h-0 flex-1 flex-col lg:flex-row"
       >
         <section
-          className="flex min-h-0 flex-1 flex-col border-b border-border lg:flex-none lg:border-b-0 lg:border-r"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden border-b border-border lg:flex-none lg:border-b-0 lg:border-r"
           style={{ flexBasis: `${leftPct}%` }}
         >
           <SearchPanel
+            previewCardId={selected?.id ?? null}
             onSelect={(card) => setSelected(card)}
             onAdd={(card) => active && decks.addCard(active.id, card)}
             onHover={(h) => setHover(h)}
@@ -251,7 +252,7 @@ export default function Home() {
         >
           <div className="m-auto h-12 w-[3px] rounded-full bg-border-strong transition-colors group-hover:bg-accent" />
         </div>
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div
             className="flex shrink-0 flex-col overflow-hidden border-b border-border"
             style={{ height: "40vh" }}
@@ -272,6 +273,7 @@ export default function Home() {
             {active ? (
               <DeckPanel
                 deck={active}
+                previewCardId={selected?.id ?? null}
                 onSetQty={(cardId, qty) =>
                   decks.setQuantity(active.id, cardId, qty)
                 }

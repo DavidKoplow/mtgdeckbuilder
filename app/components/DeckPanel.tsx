@@ -11,6 +11,8 @@ type Props = {
     payload: { src?: string; x: number; y: number } | null
   ) => void;
   onSelect: (cardId: string) => void;
+  /** Scryfall card id — tile/row is highlighted when it matches the preview pane */
+  previewCardId?: string | null;
 };
 
 type ViewMode = "grid" | "list";
@@ -39,6 +41,7 @@ export function DeckPanel({
   onSetQty,
   onHover,
   onSelect,
+  previewCardId = null,
 }: Props) {
   const [view, setView] = useState<ViewMode>("grid");
 
@@ -124,6 +127,7 @@ export function DeckPanel({
                       <DeckTile
                         key={e.cardId}
                         entry={e}
+                        highlighted={previewCardId === e.cardId}
                         onSetQty={(q) => onSetQty(e.cardId, q)}
                         onHover={onHover}
                         onSelect={() => onSelect(e.cardId)}
@@ -136,6 +140,7 @@ export function DeckPanel({
                       <DeckRow
                         key={e.cardId}
                         entry={e}
+                        highlighted={previewCardId === e.cardId}
                         onSetQty={(q) => onSetQty(e.cardId, q)}
                         onHover={onHover}
                         onSelect={() => onSelect(e.cardId)}
@@ -191,17 +196,20 @@ function ViewToggle({
 
 function DeckTile({
   entry,
+  highlighted,
   onSetQty,
   onHover,
   onSelect,
 }: {
   entry: DeckEntry;
+  highlighted?: boolean;
   onSetQty: (q: number) => void;
   onHover: (p: { src?: string; x: number; y: number } | null) => void;
   onSelect: () => void;
 }) {
   return (
     <li
+      aria-current={highlighted ? "true" : undefined}
       className="group relative"
       onMouseEnter={(e) =>
         onHover({ src: entry.imageNormal, x: e.clientX, y: e.clientY })
@@ -213,7 +221,11 @@ function DeckTile({
     >
       <div
         onClick={onSelect}
-        className="relative cursor-pointer overflow-hidden rounded-[9px] ring-1 ring-black/10 transition group-hover:ring-accent"
+        className={`relative cursor-pointer overflow-hidden rounded-[9px] transition ${
+          highlighted
+            ? "ring-2 ring-accent shadow-[0_0_0_3px_rgba(79,70,229,0.35)]"
+            : "ring-1 ring-black/10 group-hover:ring-accent"
+        }`}
       >
         {entry.imageNormal ? (
           <img
@@ -282,18 +294,25 @@ function DeckTile({
 
 function DeckRow({
   entry,
+  highlighted,
   onSetQty,
   onHover,
   onSelect,
 }: {
   entry: DeckEntry;
+  highlighted?: boolean;
   onSetQty: (q: number) => void;
   onHover: (p: { src?: string; x: number; y: number } | null) => void;
   onSelect: () => void;
 }) {
   return (
     <li
-      className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-accent-subtle"
+      aria-current={highlighted ? "true" : undefined}
+      className={`group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition ${
+        highlighted
+          ? "bg-accent-subtle ring-2 ring-inset ring-accent/70"
+          : "hover:bg-accent-subtle"
+      }`}
       onClick={onSelect}
       onMouseEnter={(e) =>
         onHover({ src: entry.imageNormal, x: e.clientX, y: e.clientY })

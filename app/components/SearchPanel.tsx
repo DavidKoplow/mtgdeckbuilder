@@ -18,6 +18,8 @@ type Props = {
   onHover: (
     payload: { src?: string; backSrc?: string; x: number; y: number } | null
   ) => void;
+  /** Scryfall card id — row is highlighted when it matches the preview pane */
+  previewCardId?: string | null;
 };
 
 const COLORS: { sym: string; name: string }[] = [
@@ -29,7 +31,12 @@ const COLORS: { sym: string; name: string }[] = [
 ];
 const RARITIES = ["common", "uncommon", "rare", "mythic"];
 
-export function SearchPanel({ onSelect, onAdd, onHover }: Props) {
+export function SearchPanel({
+  onSelect,
+  onAdd,
+  onHover,
+  previewCardId = null,
+}: Props) {
   const [filters, setFilters] = useState<AdvancedFilters>({
     sort: "name",
     colorMode: "identity",
@@ -374,10 +381,16 @@ export function SearchPanel({ onSelect, onAdd, onHover }: Props) {
             const thumb = getCardImage(card, "small");
             const normal = getCardImage(card, "normal");
             const back = getCardBackImage(card, "normal");
+            const isPreviewed = previewCardId != null && card.id === previewCardId;
             return (
               <li
                 key={card.id}
-                className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition hover:bg-accent-subtle"
+                aria-current={isPreviewed ? "true" : undefined}
+                className={`group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition ${
+                  isPreviewed
+                    ? "bg-accent-subtle ring-2 ring-inset ring-accent/70"
+                    : "hover:bg-accent-subtle"
+                }`}
                 onClick={() => onSelect(card)}
                 onMouseEnter={(e) =>
                   onHover({
