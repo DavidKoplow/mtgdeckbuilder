@@ -1,22 +1,23 @@
 "use client";
 
-import { use, useRef, useState } from "react";
+import { Suspense, useRef, useState } from "react";
 import Link from "next/link";
-import { useDecks } from "../../lib/decks";
+import { useSearchParams } from "next/navigation";
+import { useDecks } from "../lib/decks";
 import {
   PlayCard,
   Zone,
   usePlaytest,
-} from "../../lib/playtest";
-import { PlayCardView } from "../../components/playtest/PlayCardView";
+} from "../lib/playtest";
+import { PlayCardView } from "../components/playtest/PlayCardView";
 import {
   MulliganBottomModal,
   ScryModal,
   ScryPrompt,
   SearchModal,
   TokenCreator,
-} from "../../components/playtest/Modals";
-import { CardHover } from "../../components/CardHover";
+} from "../components/playtest/Modals";
+import { CardHover } from "../components/CardHover";
 
 type Hover = { src?: string; x: number; y: number } | null;
 
@@ -24,18 +25,26 @@ function isLand(typeLine: string | undefined): boolean {
   return !!typeLine && /\bland\b/i.test(typeLine);
 }
 
-export default function PlayPage({
-  params,
-}: {
-  params: Promise<{ deckId: string }>;
-}) {
-  const { deckId } = use(params);
+function PlayPageContent() {
+  const searchParams = useSearchParams();
+  const deckId = searchParams.get("deck") ?? "";
   const decks = useDecks();
 
   if (!decks.hydrated) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-text-subtle">
         Loading…
+      </div>
+    );
+  }
+
+  if (!deckId) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
+        <p>No deck selected.</p>
+        <Link href="/" className="text-accent hover:underline">
+          Back to builder
+        </Link>
       </div>
     );
   }
@@ -64,6 +73,20 @@ export default function PlayPage({
   }
 
   return <Playtest deck={deck} />;
+}
+
+export default function PlayPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-1 items-center justify-center text-sm text-text-subtle">
+          Loading…
+        </div>
+      }
+    >
+      <PlayPageContent />
+    </Suspense>
+  );
 }
 
 function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number] }) {

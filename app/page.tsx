@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useDecks } from "./lib/decks";
 import { SearchPanel } from "./components/SearchPanel";
 import { DeckPanel } from "./components/DeckPanel";
@@ -184,13 +185,13 @@ export default function Home() {
             />
           )}
           {active && active.entries.length > 0 && (
-            <a
-              href={`/play/${active.id}`}
+            <Link
+              href={`/play/?deck=${encodeURIComponent(active.id)}`}
               className="mr-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-accent-hover"
               title="Playtest this deck"
             >
               Playtest
-            </a>
+            </Link>
           )}
           <button
             onClick={handleUndo}
