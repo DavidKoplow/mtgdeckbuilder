@@ -1,2 +1,2 @@
-:HL["/mtgdeckbuilder/_next/static/chunks/0t8tfio.4nlkb.css","style"]
-0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"/_not-found","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"_lT6HGUPk_VaBvWNSkGgi"}
+:HL["/mtgdeckbuilder/_next/static/chunks/0sty03k6my3oc.css","style"]
+0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"/_not-found","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"LRCzHzGu_5SczQb46G-Pe"}
