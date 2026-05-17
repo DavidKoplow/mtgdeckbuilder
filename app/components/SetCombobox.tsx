@@ -11,7 +11,10 @@ type Props = {
 
 export function SetCombobox({ value, onChange }: Props) {
   const [sets, setSets] = useState<ScryfallSet[] | null>(null);
-  const [input, setInput] = useState("");
+  const [draft, setDraft] = useState<{
+    sourceValue: string | undefined;
+    input: string;
+  }>({ sourceValue: value, input: "" });
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -26,17 +29,6 @@ export function SetCombobox({ value, onChange }: Props) {
     };
   }, []);
 
-  // Keep input text in sync with selected code from outside
-  useEffect(() => {
-    if (!sets) return;
-    if (!value) {
-      setInput("");
-      return;
-    }
-    const match = sets.find((s) => s.code === value);
-    if (match) setInput(`${match.name} (${match.code.toUpperCase()})`);
-  }, [value, sets]);
-
   // Close on outside click
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -46,6 +38,13 @@ export function SetCombobox({ value, onChange }: Props) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  const selectedText = useMemo(() => {
+    if (!sets || !value) return "";
+    const match = sets.find((s) => s.code === value);
+    return match ? `${match.name} (${match.code.toUpperCase()})` : "";
+  }, [sets, value]);
+  const input = draft.sourceValue === value ? draft.input : selectedText;
 
   const matches = useMemo(() => {
     if (!sets) return [];
@@ -59,20 +58,20 @@ export function SetCombobox({ value, onChange }: Props) {
       .map((x) => x.s);
     return scored;
   }, [sets, input]);
-
-  useEffect(() => {
-    if (highlight >= matches.length) setHighlight(0);
-  }, [matches, highlight]);
+  const activeHighlight = Math.min(highlight, Math.max(0, matches.length - 1));
 
   function select(set: ScryfallSet) {
     onChange(set.code);
-    setInput(`${set.name} (${set.code.toUpperCase()})`);
+    setDraft({
+      sourceValue: value,
+      input: `${set.name} (${set.code.toUpperCase()})`,
+    });
     setOpen(false);
   }
 
   function clear() {
     onChange(undefined);
-    setInput("");
+    setDraft({ sourceValue: undefined, input: "" });
     setOpen(false);
   }
 
@@ -83,23 +82,28 @@ export function SetCombobox({ value, onChange }: Props) {
           type="text"
           value={input}
           onChange={(e) => {
-            setInput(e.target.value);
+            setDraft({ sourceValue: undefined, input: e.target.value });
             setOpen(true);
             // Free-text edits should invalidate the current selection
             if (value) onChange(undefined);
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            setDraft({ sourceValue: value, input: selectedText || input });
+            setOpen(true);
+          }}
           onKeyDown={(e) => {
             if (!open) setOpen(true);
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setHighlight((h) => Math.min(matches.length - 1, h + 1));
+              setHighlight((h) =>
+                Math.min(Math.max(0, matches.length - 1), h + 1)
+              );
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setHighlight((h) => Math.max(0, h - 1));
             } else if (e.key === "Enter") {
               e.preventDefault();
-              const m = matches[highlight];
+              const m = matches[activeHighlight];
               if (m) select(m);
             } else if (e.key === "Escape") {
               setOpen(false);
@@ -108,10 +112,10 @@ export function SetCombobox({ value, onChange }: Props) {
           placeholder={sets ? "Any set — type to filter" : "Loading sets…"}
           className="input pr-7"
         />
-        {value ? (
+          {value ? (
           <button
             onClick={clear}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-text-subtle hover:text-text"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1 text-text-subtle hover:bg-surface-subtle hover:text-text"
             aria-label="Clear set filter"
             title="Clear"
           >
@@ -121,12 +125,14 @@ export function SetCombobox({ value, onChange }: Props) {
       </div>
 
       {open && matches.length > 0 && (
-        <ul className="thin-scroll absolute z-40 mt-1 max-h-72 w-[min(22rem,90vw)] overflow-y-auto rounded-md border border-border bg-white shadow-lg">
+        <ul className="thin-scroll absolute z-40 mt-2 max-h-72 w-[min(22rem,90vw)] overflow-y-auto rounded-xl border border-border bg-white p-1 shadow-xl">
           {matches.map((s, i) => (
             <li
               key={s.id}
-              className={`flex cursor-pointer items-center gap-2 px-2 py-1.5 text-sm ${
-                i === highlight ? "bg-accent-subtle" : "hover:bg-surface-subtle"
+              className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+                i === activeHighlight
+                  ? "bg-[image:var(--rainbow-soft)] text-text"
+                  : "hover:bg-surface-subtle"
               }`}
               onMouseEnter={() => setHighlight(i)}
               onMouseDown={(e) => {

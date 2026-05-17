@@ -4,12 +4,18 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "convex:dev": "convex dev",
+    "vector:serve": ".venv/bin/python scripts/vector_search_server.py --device mps --trust-remote-code --no-preload-reranker --no-default-rerank",
+    "vector:build-convex": "node scripts/build_convex_card_embeddings.mjs",
+    "vector:import-convex": "npm run vector:build-convex && npx convex import --table cardEmbeddings --format jsonLines --replace -y data/convex_card_embeddings.jsonl",
     "build": "next build",
-    "deploy": "npm run build && gh-pages -d out --nojekyll",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@convex-dev/workos": "^0.0.2",
+    "@workos-inc/authkit-react": "^0.16.1",
+    "convex": "^1.39.1",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"

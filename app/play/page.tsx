@@ -3,7 +3,7 @@
 import { Suspense, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useDecks } from "../lib/decks";
+import { useDeck } from "../lib/decks";
 import {
   PlayCard,
   Zone,
@@ -18,6 +18,9 @@ import {
   TokenCreator,
 } from "../components/playtest/Modals";
 import { CardHover } from "../components/CardHover";
+import { AuthButton } from "../components/AuthButton";
+import { AppIcon } from "../components/AppIcon";
+import type { Deck } from "../lib/types";
 
 type Hover = { src?: string; x: number; y: number } | null;
 
@@ -28,12 +31,24 @@ function isLand(typeLine: string | undefined): boolean {
 function PlayPageContent() {
   const searchParams = useSearchParams();
   const deckId = searchParams.get("deck") ?? "";
-  const decks = useDecks();
+  const { deck, hydrated, isAuthenticated } = useDeck(deckId || null);
 
-  if (!decks.hydrated) {
+  if (!hydrated) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-subtle">
-        Loading…
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-bg p-8 text-sm text-text-subtle">
+        <div className="flex items-center gap-3 rounded-full border border-border bg-white px-4 py-2 shadow-sm">
+          <span className="accent-dot h-2.5 w-2.5 animate-pulse rounded-full" />
+          Loading playtest
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
+        <p>Sign in to playtest cloud decks.</p>
+        <AuthButton />
       </div>
     );
   }
@@ -49,7 +64,6 @@ function PlayPageContent() {
     );
   }
 
-  const deck = decks.decks.find((d) => d.id === deckId);
   if (!deck) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
@@ -80,8 +94,11 @@ export default function PlayPage() {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <Suspense
         fallback={
-          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-subtle">
-            Loading…
+          <div className="flex min-h-0 flex-1 items-center justify-center bg-bg p-8 text-sm text-text-subtle">
+            <div className="flex items-center gap-3 rounded-full border border-border bg-white px-4 py-2 shadow-sm">
+              <span className="accent-dot h-2.5 w-2.5 animate-pulse rounded-full" />
+              Loading playtest
+            </div>
           </div>
         }
       >
@@ -93,7 +110,7 @@ export default function PlayPage() {
   );
 }
 
-function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number] }) {
+function Playtest({ deck }: { deck: Deck }) {
   const pt = usePlaytest(deck);
   const { state } = pt;
   const [hover, setHover] = useState<Hover>(null);
@@ -107,36 +124,39 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2">
-        <div className="flex items-center gap-2">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
+      <header className="soft-divider flex shrink-0 flex-wrap items-center justify-between gap-3 bg-surface-raised px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Link
             href="/"
-            className="rounded-md border border-border bg-white px-2.5 py-1.5 text-sm text-text-muted transition hover:border-accent hover:text-accent"
+            className="control flex items-center gap-2 px-3 py-2 text-sm"
           >
-            ← Builder
+            <AppIcon size={20} className="rounded-md" />
+            Builder
           </Link>
-          <div className="text-sm font-semibold">{deck.name}</div>
-          <span className="rounded-full bg-surface-subtle px-2 py-0.5 text-[11px] text-text-subtle">
+          <div className="min-w-0 truncate text-sm font-semibold">
+            {deck.name}
+          </div>
+          <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[11px] capitalize text-text-subtle">
             {deck.format}
           </span>
         </div>
 
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-sm">
           <LifeCounter life={state.life} onDelta={pt.lifeDelta} onSet={pt.setLife} />
-          <div className="flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-xs">
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
             <span className="text-text-muted">Turn</span>
             <span className="font-semibold tabular-nums">{state.turn}</span>
             <button
               onClick={pt.endTurn}
-              className="ml-2 rounded border border-border px-2 py-0.5 text-[11px] hover:bg-surface-subtle"
+              className="control ml-2 px-2 py-1 text-[11px]"
               title="End turn (untaps all)"
             >
               End turn
             </button>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <ToolButton onClick={() => pt.draw(1)}>Draw</ToolButton>
             <ToolButton onClick={pt.shuffleLib}>Shuffle</ToolButton>
             <ToolButton onClick={pt.untapAll}>Untap all</ToolButton>
@@ -153,12 +173,12 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col bg-surface-subtle">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 bg-bg p-3">
         {/* Battlefield */}
         <DropZone
           to="battlefield"
           onDrop={(from, id) => pt.move(id, from, "battlefield")}
-          className="relative flex flex-1 flex-col overflow-auto border-b border-border p-4"
+          className="workspace-panel relative flex flex-1 flex-col overflow-auto rounded-xl p-4"
         >
           <ZoneHeader label="Battlefield" count={state.battlefield.length} />
           {(() => {
@@ -186,13 +206,13 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
                     </div>
                   ))}
                   {state.battlefield.length === 0 && (
-                    <div className="text-xs text-text-subtle">
-                      Nothing in play. Drag a card here or use its menu.
+                    <div className="rounded-full border border-border bg-surface-raised px-4 py-2 text-xs text-text-subtle shadow-sm">
+                      Battlefield empty
                     </div>
                   )}
                 </div>
-                <div className="mt-auto flex flex-col gap-1 rounded-md bg-surface-subtle/60 p-2 ring-1 ring-border/60">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                <div className="mt-auto flex flex-col gap-2 rounded-xl bg-surface-raised p-3 ring-1 ring-border/70">
+                  <span className="text-[11px] font-semibold uppercase text-text-muted">
                     Lands <span className="text-text-subtle tabular-nums">{lands.length}</span>
                   </span>
                   <div className="flex flex-wrap content-start gap-3">
@@ -214,7 +234,7 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
                     ))}
                     {lands.length === 0 && (
                       <div className="px-1 text-xs text-text-subtle">
-                        Lands you play will appear here.
+                        No lands in play
                       </div>
                     )}
                   </div>
@@ -225,14 +245,14 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
         </DropZone>
 
         {/* Hand + zones */}
-        <section className="flex flex-none flex-col gap-2 border-t border-border bg-surface p-3">
+        <section className="workspace-panel flex flex-none flex-col gap-2 rounded-xl bg-surface p-3">
           <div className="flex items-start gap-4">
             <div className="flex flex-1 flex-col">
               <ZoneHeader label="Hand" count={state.hand.length} />
               <DropZone
                 to="hand"
                 onDrop={(from, id) => pt.move(id, from, "hand")}
-                className="thin-scroll mt-2 flex min-h-[300px] gap-2 overflow-x-auto rounded-md pb-2"
+                className="thin-scroll mt-2 flex min-h-[300px] gap-2 overflow-x-auto rounded-xl bg-surface-raised p-2"
               >
                 {state.hand.map((c) => (
                   <PlayCardView
@@ -245,7 +265,7 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
                   />
                 ))}
                 {state.hand.length === 0 && (
-                  <div className="px-2 text-xs text-text-subtle">
+                  <div className="px-2 py-2 text-xs text-text-subtle">
                     Hand is empty.
                   </div>
                 )}
@@ -263,7 +283,7 @@ function Playtest({ deck }: { deck: ReturnType<typeof useDecks>["decks"][number]
               extra={
                 <button
                   onClick={() => pt.draw(1)}
-                  className="mt-1 w-full rounded border border-border bg-white px-2 py-1 text-xs hover:bg-surface-subtle"
+                  className="control mt-1 w-full px-2 py-1.5 text-xs"
                 >
                   Draw 1
                 </button>
@@ -365,10 +385,10 @@ function ToolButton({
   return (
     <button
       onClick={onClick}
-      className={`rounded-md border px-2 py-1 text-xs transition ${
+      className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
         danger
           ? "border-border bg-white text-text-muted hover:border-[color:var(--danger)] hover:text-[color:var(--danger)]"
-          : "border-border bg-white text-text-muted hover:border-accent hover:text-accent"
+          : "border-border bg-white text-text-muted hover:border-border-strong hover:text-text"
       }`}
     >
       {children}
@@ -379,7 +399,7 @@ function ToolButton({
 function ZoneHeader({ label, count }: { label: string; count: number }) {
   return (
     <div className="flex items-baseline gap-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+      <span className="text-[11px] font-semibold uppercase text-text-muted">
         {label}
       </span>
       <span className="text-[11px] text-text-subtle tabular-nums">
@@ -415,28 +435,28 @@ function StackZone({
       <DropZone
         to={zoneName}
         onDrop={(from, id) => onDropFrom?.(from, id)}
-        className="relative h-[280px] w-[200px] rounded-md ring-1 ring-border"
+        className="relative h-[280px] w-[200px] rounded-xl bg-surface-raised shadow-sm ring-1 ring-border"
         onMouseEnter={(e) => onHover(hoverSrc, e.clientX, e.clientY)}
         onMouseMove={(e) => onHover(hoverSrc, e.clientX, e.clientY)}
         onMouseLeave={() => onHover(undefined, 0, 0)}
       >
         {cards.length === 0 ? (
-          <div className="flex h-full w-full items-center justify-center rounded-md bg-surface-subtle text-xs text-text-subtle">
-            (empty)
+          <div className="flex h-full w-full items-center justify-center rounded-xl bg-surface-subtle text-xs text-text-subtle">
+            Empty
           </div>
         ) : facedown ? (
-          <div className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-[#2b2b3d] to-[#1c1c2b] text-xl font-semibold text-white/80">
+          <div className="flex h-full w-full items-center justify-center rounded-xl bg-[radial-gradient(circle_at_35%_25%,#384841,#17201d)] text-xl font-semibold text-white/80">
             {cards.length}
           </div>
         ) : top?.imageNormal ? (
           <img
             src={top.imageNormal}
             alt={top.name}
-            className="h-full w-full rounded-md object-cover"
+            className="h-full w-full rounded-xl object-cover"
             draggable={false}
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center rounded-md bg-surface-subtle px-1 text-center text-xs">
+          <div className="flex h-full w-full items-center justify-center rounded-xl bg-surface-subtle px-1 text-center text-xs">
             {top?.name}
           </div>
         )}
@@ -449,7 +469,7 @@ function StackZone({
             e.currentTarget.value = "";
           }}
           defaultValue=""
-          className="rounded border border-border bg-white px-1 py-1 text-xs"
+          className="control px-2 py-1.5 text-xs"
         >
           <option value="" disabled>
             Move top…
@@ -488,7 +508,7 @@ function DropZone({
   return (
     <div
       className={`${className ?? ""} ${
-        over ? "outline outline-2 outline-accent/70" : ""
+        over ? "outline outline-2 outline-accent/70 outline-offset-2" : ""
       }`}
       onMouseEnter={onMouseEnter}
       onMouseMove={onMouseMove}
@@ -538,11 +558,11 @@ function LifeCounter({
   onSet: (v: number) => void;
 }) {
   return (
-    <div className="flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-xs">
+    <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
       <span className="text-text-muted">Life</span>
       <button
         onClick={() => onDelta(-1)}
-        className="flex h-5 w-5 items-center justify-center rounded bg-surface-subtle hover:bg-border"
+        className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-subtle hover:bg-border"
         aria-label="Lose 1 life"
       >
         −
@@ -551,11 +571,11 @@ function LifeCounter({
         type="number"
         value={life}
         onChange={(e) => onSet(Number(e.target.value) || 0)}
-        className="w-12 rounded border border-border bg-white px-1 py-0.5 text-center text-sm font-semibold tabular-nums outline-none focus:border-accent"
+        className="w-12 rounded-md border border-border bg-white px-1 py-0.5 text-center text-sm font-semibold tabular-nums outline-none focus:border-accent"
       />
       <button
         onClick={() => onDelta(+1)}
-        className="flex h-5 w-5 items-center justify-center rounded bg-accent text-white hover:bg-accent-hover"
+        className="accent-fill flex h-6 w-6 items-center justify-center rounded-md"
         aria-label="Gain 1 life"
       >
         +
@@ -586,13 +606,13 @@ function MulliganPrompt({
       </span>
       <button
         onClick={onKeep}
-        className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white hover:bg-accent-hover"
+        className="control-primary px-3 py-1 text-sm font-semibold"
       >
         Keep
       </button>
       <button
         onClick={onMulligan}
-        className="rounded-md border border-border px-3 py-1 text-sm text-text-muted hover:text-text"
+        className="control px-3 py-1 text-sm"
       >
         Mulligan
       </button>

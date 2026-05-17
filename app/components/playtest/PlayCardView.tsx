@@ -114,13 +114,13 @@ export function PlayCardView({
             src={card.imageNormal}
             alt={card.name}
             draggable={false}
-            className={`h-full w-full rounded-[6px] object-cover ring-1 ring-black/20 transition ${
+            className={`h-full w-full rounded-lg object-cover shadow-sm ring-1 ring-black/20 transition ${
               selected ? "ring-2 ring-accent" : ""
             }`}
           />
         ) : (
           <div
-            className={`flex h-full w-full flex-col items-center justify-center rounded-[6px] bg-surface-subtle p-1 text-center text-[10px] text-text-muted ring-1 ring-black/20 ${
+            className={`flex h-full w-full flex-col items-center justify-center rounded-lg bg-surface-subtle p-1 text-center text-[10px] text-text-muted ring-1 ring-black/20 ${
               selected ? "ring-2 ring-accent" : ""
             }`}
           >
@@ -129,7 +129,7 @@ export function PlayCardView({
               <div className="mt-1 text-[10px]">{card.tokenNote}</div>
             )}
             {card.isToken && (
-              <div className="mt-1 text-[9px] uppercase tracking-wide opacity-70">
+              <div className="mt-1 text-[9px] uppercase opacity-70">
                 Token
               </div>
             )}
@@ -163,15 +163,15 @@ export function PlayCardView({
               setMenuOpen((v) => !v);
               setCounterMenuOpen(false);
             }}
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/90"
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/90"
             style={{ opacity: menuOpen || counterMenuOpen ? 1 : undefined }}
           >
             ⋯
           </button>
           {menuOpen && (
-            <div className="z-10 flex flex-col gap-0.5 rounded-md border border-border bg-white p-1 text-xs shadow-lg">
+            <div className="z-10 flex flex-col gap-0.5 rounded-lg border border-border bg-white p-1 text-xs shadow-lg">
               <button
-                className="rounded px-2 py-1 text-left hover:bg-surface-subtle"
+                className="rounded-md px-2 py-1 text-left hover:bg-surface-subtle"
                 onClick={() => {
                   setMenuOpen(false);
                   onTap?.();
@@ -180,7 +180,7 @@ export function PlayCardView({
                 {card.tapped ? "Untap" : "Tap"}
               </button>
               <button
-                className="rounded px-2 py-1 text-left hover:bg-surface-subtle"
+                className="rounded-md px-2 py-1 text-left hover:bg-surface-subtle"
                 onClick={() => {
                   setMenuOpen(false);
                   setCounterMenuOpen(true);
@@ -191,7 +191,7 @@ export function PlayCardView({
               {destinations.map((d) => (
                 <button
                   key={d.zone}
-                  className="rounded px-2 py-1 text-left hover:bg-surface-subtle"
+                  className="rounded-md px-2 py-1 text-left hover:bg-surface-subtle"
                   onClick={() => {
                     setMenuOpen(false);
                     onMove?.(d.zone);
@@ -203,7 +203,7 @@ export function PlayCardView({
             </div>
           )}
           {counterMenuOpen && (
-            <div className="z-10 flex flex-col gap-1 rounded-md border border-border bg-white p-2 text-xs shadow-lg">
+            <div className="z-10 flex flex-col gap-1 rounded-lg border border-border bg-white p-2 text-xs shadow-lg">
               {COUNTER_KINDS.map((k) => (
                 <div
                   key={k}
@@ -212,7 +212,7 @@ export function PlayCardView({
                   <span className="font-medium">{k}</span>
                   <div className="flex items-center gap-1">
                     <button
-                      className="flex h-5 w-5 items-center justify-center rounded bg-surface-subtle hover:bg-border"
+                      className="flex h-5 w-5 items-center justify-center rounded-md bg-surface-subtle hover:bg-border"
                       onClick={() => onCounter?.(k, -1)}
                     >
                       −
@@ -221,7 +221,7 @@ export function PlayCardView({
                       {card.counters[k] ?? 0}
                     </span>
                     <button
-                      className="flex h-5 w-5 items-center justify-center rounded bg-accent text-white hover:bg-accent-hover"
+                      className="accent-fill flex h-5 w-5 items-center justify-center rounded-md"
                       onClick={() => onCounter?.(k, 1)}
                     >
                       +
@@ -247,16 +247,16 @@ export function PlayCardView({
           <button
             aria-label="Card actions"
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white hover:bg-black/90"
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white hover:bg-black/90"
           >
             ⋯
           </button>
           {menuOpen && (
-            <div className="z-10 mt-1 flex flex-col gap-0.5 rounded-md border border-border bg-white p-1 text-xs shadow-lg">
+            <div className="z-10 mt-1 flex flex-col gap-0.5 rounded-lg border border-border bg-white p-1 text-xs shadow-lg">
               {destinations.map((d) => (
                 <button
                   key={d.zone}
-                  className="rounded px-2 py-1 text-left hover:bg-surface-subtle"
+                  className="rounded-md px-2 py-1 text-left hover:bg-surface-subtle"
                   onClick={() => {
                     setMenuOpen(false);
                     onMove?.(d.zone);
@@ -291,7 +291,7 @@ function CustomCounterRow({
           <span className="font-medium">{k}</span>
           <div className="flex items-center gap-1">
             <button
-              className="flex h-5 w-5 items-center justify-center rounded bg-surface-subtle hover:bg-border"
+              className="flex h-5 w-5 items-center justify-center rounded-md bg-surface-subtle hover:bg-border"
               onClick={() => onCounter(k, -1)}
             >
               −
@@ -300,7 +300,7 @@ function CustomCounterRow({
               {card.counters[k]}
             </span>
             <button
-              className="flex h-5 w-5 items-center justify-center rounded bg-accent text-white hover:bg-accent-hover"
+              className="accent-fill flex h-5 w-5 items-center justify-center rounded-md"
               onClick={() => onCounter(k, 1)}
             >
               +
@@ -313,7 +313,7 @@ function CustomCounterRow({
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="custom…"
-          className="min-w-0 flex-1 rounded border border-border bg-white px-1 py-0.5 text-[11px] outline-none focus:border-accent"
+          className="min-w-0 flex-1 rounded-md border border-border bg-white px-1 py-0.5 text-[11px] outline-none focus:border-accent"
         />
         <button
           disabled={!name.trim()}
@@ -322,7 +322,7 @@ function CustomCounterRow({
             onCounter(name.trim(), 1);
             setName("");
           }}
-          className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-white disabled:opacity-40"
+          className="accent-fill rounded-md px-1.5 py-0.5 text-[11px] disabled:opacity-40"
         >
           +
         </button>

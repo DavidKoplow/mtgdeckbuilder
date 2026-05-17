@@ -6,7 +6,7 @@ import {
   EXPORT_FORMATS,
   type ExportFormat,
   downloadDeck,
-  serializeDeck,
+  serializeDeckForExport,
 } from "../lib/export";
 
 type Props = {
@@ -17,6 +17,11 @@ type Props = {
 export function ExportButton({ deck, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<ExportFormat | null>(null);
+  const [busy, setBusy] = useState<{
+    format: ExportFormat;
+    action: "copy" | "save";
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,20 +41,36 @@ export function ExportButton({ deck, disabled }: Props) {
   }, [open]);
 
   async function onCopy(format: ExportFormat) {
-    const text = serializeDeck(deck, format);
+    setBusy({ format, action: "copy" });
+    setError(null);
     try {
+      const text = await serializeDeckForExport(deck, format);
       await navigator.clipboard.writeText(text);
       setCopied(format);
       setTimeout(() => setCopied((c) => (c === format ? null : c)), 1500);
     } catch {
-      // Clipboard unavailable — fall back to download.
-      downloadDeck(deck, format);
+      try {
+        // Clipboard unavailable — fall back to download.
+        await downloadDeck(deck, format);
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    } finally {
+      setBusy(null);
     }
   }
 
-  function onDownload(format: ExportFormat) {
-    downloadDeck(deck, format);
-    setOpen(false);
+  async function onDownload(format: ExportFormat) {
+    setBusy({ format, action: "save" });
+    setError(null);
+    try {
+      await downloadDeck(deck, format);
+      setOpen(false);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -61,7 +82,7 @@ export function ExportButton({ deck, disabled }: Props) {
         aria-label="Export deck"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-1.5 rounded-md border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text-muted transition hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text-muted"
+        className="control flex items-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
       >
         <ExportIcon />
         <span>Export</span>
@@ -69,15 +90,15 @@ export function ExportButton({ deck, disabled }: Props) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-30 mt-1 w-72 overflow-hidden rounded-md border border-border bg-white shadow-lg"
+          className="absolute right-0 top-full z-30 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-white shadow-xl"
         >
-          <div className="border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+          <div className="border-b border-border bg-surface-raised px-3 py-2 text-[11px] font-semibold uppercase text-text-muted">
             Export format
           </div>
           <ul className="max-h-[60vh] overflow-y-auto py-1">
             {EXPORT_FORMATS.map((f) => (
               <li key={f.id} className="px-1">
-                <div className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-surface-subtle">
+                <div className="flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-subtle">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-text">
                       {f.label}
@@ -89,27 +110,47 @@ export function ExportButton({ deck, disabled }: Props) {
                   <div className="flex shrink-0 items-center gap-1">
                     <button
                       onClick={() => onCopy(f.id)}
-                      className="rounded border border-border bg-white px-1.5 py-0.5 text-[11px] text-text-muted transition hover:border-accent hover:text-accent"
+                      disabled={busy !== null}
+                      className="control px-2 py-1 text-[11px] disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
                       title={`Copy ${f.label} to clipboard`}
                     >
-                      {copied === f.id ? "Copied!" : "Copy"}
+                      {busy?.format === f.id && busy.action === "copy"
+                        ? "Copying..."
+                        : copied === f.id
+                          ? "Copied!"
+                          : "Copy"}
                     </button>
                     <button
                       onClick={() => onDownload(f.id)}
-                      className="rounded border border-border bg-white px-1.5 py-0.5 text-[11px] text-text-muted transition hover:border-accent hover:text-accent"
+                      disabled={busy !== null}
+                      className="control px-2 py-1 text-[11px] disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
                       title={`Download as .${f.extension}`}
                     >
-                      Save
+                      {busy?.format === f.id && busy.action === "save"
+                        ? "Saving..."
+                        : "Save"}
                     </button>
                   </div>
                 </div>
               </li>
             ))}
           </ul>
+          {error && (
+            <div
+              role="status"
+              className="border-t border-border bg-red-50 px-3 py-2 text-[11px] text-red-700"
+            >
+              {error}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Export failed";
 }
 
 function ExportIcon() {

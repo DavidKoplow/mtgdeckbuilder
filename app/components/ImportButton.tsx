@@ -99,27 +99,27 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
         disabled={disabled}
         title="Import deck"
         aria-label="Import deck"
-        className="flex items-center gap-1.5 rounded-md border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-text-muted transition hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text-muted"
+        className="control flex items-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
       >
         <ImportIcon />
         <span>Import</span>
       </button>
       {open && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
           onClick={close}
         >
           <div
-            className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg bg-white shadow-xl"
+            className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-label="Import deck"
           >
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center justify-between border-b border-border bg-surface-raised px-4 py-3">
               <h2 className="text-sm font-semibold">Import deck</h2>
               <button
                 onClick={close}
-                className="rounded p-1 text-text-subtle hover:bg-surface-subtle hover:text-text"
+                className="control p-2"
                 aria-label="Close"
               >
                 ×
@@ -139,7 +139,7 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     placeholder={"4 Lightning Bolt\n1 Sol Ring\n..."}
-                    className="thin-scroll h-56 w-full resize-y rounded-md border border-border bg-white p-2 font-mono text-xs outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                    className="thin-scroll h-56 w-full resize-y rounded-xl border border-border bg-surface-raised p-3 font-mono text-xs outline-none focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
                     spellCheck={false}
                   />
 
@@ -157,7 +157,7 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
                     />
                     <button
                       onClick={() => fileRef.current?.click()}
-                      className="rounded-md border border-border bg-white px-2.5 py-1 text-text-muted hover:border-accent hover:text-accent"
+                      className="control px-2.5 py-1.5 text-text-muted"
                     >
                       Load file…
                     </button>
@@ -184,7 +184,7 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
                   </div>
 
                   {stage === "error" && error && (
-                    <div className="rounded-md border border-[color:var(--danger)]/40 bg-[color:var(--danger)]/5 px-3 py-2 text-xs text-[color:var(--danger)]">
+                    <div className="rounded-lg border border-[color:var(--danger)]/40 bg-[color:var(--danger)]/5 px-3 py-2 text-xs text-[color:var(--danger)]">
                       {error}
                     </div>
                   )}
@@ -201,7 +201,7 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-border bg-surface px-4 py-3">
+            <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-raised px-4 py-3">
               {stage === "preview" ? (
                 <>
                   <button
@@ -209,14 +209,14 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
                       setStage("idle");
                       setPreview(null);
                     }}
-                    className="rounded-md border border-border bg-white px-3 py-1.5 text-xs text-text-muted hover:text-text"
+                    className="control px-3 py-1.5 text-xs"
                   >
                     Back
                   </button>
                   <button
                     onClick={onConfirm}
                     disabled={!preview || preview.entries.length === 0}
-                    className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent"
+                    className="control-primary px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
                   >
                     {mode === "replace" ? "Replace deck" : "Add to deck"}
                   </button>
@@ -225,14 +225,14 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
                 <>
                   <button
                     onClick={close}
-                    className="rounded-md border border-border bg-white px-3 py-1.5 text-xs text-text-muted hover:text-text"
+                    className="control px-3 py-1.5 text-xs"
                   >
                     Cancel
                   </button>
                   <button
                     onClick={onPreview}
                     disabled={!text.trim() || stage === "resolving"}
-                    className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent"
+                    className="control-primary px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
                   >
                     {stage === "resolving" ? "Resolving…" : "Preview"}
                   </button>
@@ -299,7 +299,7 @@ function ImportPreview({
       </div>
 
       {unresolved.length > 0 && (
-        <div className="rounded-md border border-[color:var(--danger)]/30 bg-[color:var(--danger)]/5 px-3 py-2 text-xs">
+        <div className="rounded-lg border border-[color:var(--danger)]/30 bg-[color:var(--danger)]/5 px-3 py-2 text-xs">
           <div className="mb-1 font-semibold text-[color:var(--danger)]">
             {unresolved.length} line{unresolved.length === 1 ? "" : "s"} not
             found
@@ -315,7 +315,7 @@ function ImportPreview({
         </div>
       )}
 
-      <div className="thin-scroll max-h-64 overflow-y-auto rounded-md border border-border">
+      <div className="thin-scroll max-h-64 overflow-y-auto rounded-xl border border-border">
         <table className="w-full text-left text-xs">
           <thead className="sticky top-0 bg-surface-subtle text-text-muted">
             <tr>

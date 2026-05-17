@@ -19,8 +19,8 @@ function Backdrop({
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
-      <div className="max-h-full w-full max-w-4xl overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-black/10">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="max-h-full w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10">
         {children}
       </div>
     </div>
@@ -39,7 +39,7 @@ function CardTile({
   return (
     <button
       onClick={onClick}
-      className={`relative block overflow-hidden rounded-md ring-1 transition ${
+      className={`relative block overflow-hidden rounded-lg shadow-sm ring-1 transition ${
         selected ? "ring-2 ring-accent" : "ring-black/10 hover:ring-accent/50"
       }`}
       style={{ width: 100, height: 140 }}
@@ -108,7 +108,7 @@ export function MulliganBottomModal({
                   onClick={() => toggle(c.instanceId)}
                 />
                 {idx >= 0 && (
-                  <div className="pointer-events-none absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[11px] font-bold text-white">
+                  <div className="accent-fill pointer-events-none absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold">
                     {idx + 1}
                   </div>
                 )}
@@ -120,7 +120,7 @@ export function MulliganBottomModal({
           <button
             disabled={picked.length !== count}
             onClick={() => onConfirm(picked)}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+            className="control-primary px-3 py-1.5 text-sm font-semibold disabled:opacity-40"
           >
             Confirm
           </button>
@@ -196,9 +196,9 @@ export function ScryModal({
                 <CardTile card={card} />
                 <div className="flex gap-1">
                   <button
-                    className={`rounded px-2 py-0.5 text-[11px] ${
+                    className={`rounded-md px-2 py-0.5 text-[11px] ${
                       d === "top"
-                        ? "bg-accent text-white"
+                        ? "bg-[image:var(--rainbow-soft)] text-text ring-1 ring-accent/30"
                         : "border border-border hover:bg-surface-subtle"
                     }`}
                     onClick={() => setFor(id, "top")}
@@ -206,9 +206,9 @@ export function ScryModal({
                     Top
                   </button>
                   <button
-                    className={`rounded px-2 py-0.5 text-[11px] ${
+                    className={`rounded-md px-2 py-0.5 text-[11px] ${
                       d === "bottom"
-                        ? "bg-accent text-white"
+                        ? "bg-[image:var(--rainbow-soft)] text-text ring-1 ring-accent/30"
                         : "border border-border hover:bg-surface-subtle"
                     }`}
                     onClick={() => setFor(id, "bottom")}
@@ -220,14 +220,14 @@ export function ScryModal({
                   <button
                     disabled={i === 0}
                     onClick={() => move(id, -1)}
-                    className="rounded border border-border px-1.5 disabled:opacity-30"
+                    className="control px-1.5 disabled:opacity-30"
                   >
                     ←
                   </button>
                   <button
                     disabled={i === order.length - 1}
                     onClick={() => move(id, +1)}
-                    className="rounded border border-border px-1.5 disabled:opacity-30"
+                    className="control px-1.5 disabled:opacity-30"
                   >
                     →
                   </button>
@@ -243,7 +243,7 @@ export function ScryModal({
           <button
             disabled={!allAssigned}
             onClick={() => onFinish(topIds, bottomIds)}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+            className="control-primary px-3 py-1.5 text-sm font-semibold disabled:opacity-40"
           >
             Put back
           </button>
@@ -298,7 +298,7 @@ export function SearchModal({
           </label>
           <button
             onClick={onCancel}
-            className="rounded border border-border px-2 py-1 text-xs hover:text-text"
+          className="control px-2 py-1 text-xs"
           >
             Cancel
           </button>
@@ -308,7 +308,7 @@ export function SearchModal({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter by name or type…"
-          className="w-full rounded-md border border-border bg-white px-3 py-1.5 text-sm outline-none focus:border-accent"
+          className="input"
         />
         <div className="thin-scroll grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2 overflow-y-auto">
           {filtered.map((c) => (
@@ -357,7 +357,7 @@ export function TokenCreator({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Goblin"
-              className="rounded-md border border-border bg-white px-2 py-1 outline-none focus:border-accent"
+              className="input"
             />
           </label>
           <label className="flex flex-col gap-1">
@@ -366,7 +366,7 @@ export function TokenCreator({
               value={pt}
               onChange={(e) => setPt(e.target.value)}
               placeholder="1/1"
-              className="rounded-md border border-border bg-white px-2 py-1 outline-none focus:border-accent"
+              className="input"
             />
           </label>
           <label className="flex flex-col gap-1">
@@ -375,14 +375,14 @@ export function TokenCreator({
               value={subtype}
               onChange={(e) => setSubtype(e.target.value)}
               placeholder="Goblin"
-              className="rounded-md border border-border bg-white px-2 py-1 outline-none focus:border-accent"
+              className="input"
             />
           </label>
         </div>
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded border border-border px-2 py-1 text-xs hover:text-text"
+            className="control px-2 py-1 text-xs"
           >
             Cancel
           </button>
@@ -403,7 +403,7 @@ export function TokenCreator({
               setSubtype("");
               onClose();
             }}
-            className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-40"
+            className="control-primary px-3 py-1 text-sm font-semibold disabled:opacity-40"
           >
             Create
           </button>
@@ -433,20 +433,20 @@ export function ScryPrompt({
             max={10}
             value={n}
             onChange={(e) => setN(Math.max(1, Number(e.target.value) || 1))}
-            className="w-16 rounded-md border border-border bg-white px-2 py-1 outline-none focus:border-accent"
+            className="input w-16"
           />
           <span>cards</span>
         </label>
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded border border-border px-2 py-1 text-xs hover:text-text"
+            className="control px-2 py-1 text-xs"
           >
             Cancel
           </button>
           <button
             onClick={() => onChoose(n)}
-            className="rounded-md bg-accent px-3 py-1 text-sm font-medium text-white"
+            className="control-primary px-3 py-1 text-sm font-semibold"
           >
             Scry
           </button>

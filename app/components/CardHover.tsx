@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Props = {
@@ -14,9 +13,7 @@ type Props = {
 // Floating card image that follows the cursor, rendered via portal so it
 // isn't clipped by scrolling parents.
 export function CardHover({ src, backSrc, x, y, visible }: Props) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  if (!mounted || !visible || !src) return null;
+  if (typeof document === "undefined" || !visible || !src) return null;
 
   const W = 260;
   const H = 362;

@@ -1,6 +1,14 @@
+import { getCardsByIdentifiers } from "./scryfall";
 import type { Deck, DeckEntry } from "./types";
 
-export type ExportFormat = "text" | "mtga" | "mtgo" | "mws" | "csv" | "json";
+export type ExportFormat =
+  | "text"
+  | "mtga"
+  | "mtgo"
+  | "mws"
+  | "csv"
+  | "json"
+  | "full-json";
 
 export type ExportFormatMeta = {
   id: ExportFormat;
@@ -49,8 +57,15 @@ export const EXPORT_FORMATS: ExportFormatMeta[] = [
   {
     id: "json",
     label: "JSON",
-    description: "Full structured deck data",
+    description: "Deck metadata with compact card snapshots",
     extension: "json",
+    mimeType: "application/json",
+  },
+  {
+    id: "full-json",
+    label: "Full card JSON",
+    description: "Each entry includes number plus full Scryfall card data",
+    extension: "full.json",
     mimeType: "application/json",
   },
 ];
@@ -131,6 +146,44 @@ function toCsv(entries: DeckEntry[]): string {
   return [header, ...rows].join("\n");
 }
 
+async function toFullCardJson(deck: Deck): Promise<string> {
+  const entries = sortedEntries(deck.entries);
+  const cards = await getCardsByIdentifiers(
+    entries.map((entry) => ({ id: entry.cardId }))
+  );
+  const cardsById = new Map(cards.map((card) => [card.id, card]));
+  const missing = entries.filter((entry) => !cardsById.has(entry.cardId));
+
+  if (missing.length > 0) {
+    const names = missing
+      .slice(0, 3)
+      .map((entry) => entry.name)
+      .join(", ");
+    throw new Error(
+      [
+        `Could not fetch full card data for ${names}`,
+        missing.length > 3 ? ", ..." : "",
+      ].join("")
+    );
+  }
+
+  return JSON.stringify(
+    {
+      name: deck.name,
+      format: deck.format,
+      cardCount: deck.cardCount,
+      createdAt: deck.createdAt,
+      updatedAt: deck.updatedAt,
+      entries: entries.map((entry) => ({
+        number: entry.quantity,
+        card: cardsById.get(entry.cardId)!,
+      })),
+    },
+    null,
+    2
+  );
+}
+
 export function serializeDeck(deck: Deck, format: ExportFormat): string {
   switch (format) {
     case "text":
@@ -164,7 +217,19 @@ export function serializeDeck(deck: Deck, format: ExportFormat): string {
         null,
         2
       );
+    case "full-json":
+      throw new Error(
+        "Full card JSON export must be serialized asynchronously"
+      );
   }
+}
+
+export async function serializeDeckForExport(
+  deck: Deck,
+  format: ExportFormat
+): Promise<string> {
+  if (format === "full-json") return toFullCardJson(deck);
+  return serializeDeck(deck, format);
 }
 
 export function filenameFor(deck: Deck, format: ExportFormat): string {
@@ -175,9 +240,12 @@ export function filenameFor(deck: Deck, format: ExportFormat): string {
   return `${safeName}.${meta.extension}`;
 }
 
-export function downloadDeck(deck: Deck, format: ExportFormat): void {
+export async function downloadDeck(
+  deck: Deck,
+  format: ExportFormat
+): Promise<void> {
   const meta = EXPORT_FORMATS.find((f) => f.id === format)!;
-  const content = serializeDeck(deck, format);
+  const content = await serializeDeckForExport(deck, format);
   const blob = new Blob([content], { type: `${meta.mimeType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

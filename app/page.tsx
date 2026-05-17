@@ -3,14 +3,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useDecks } from "./lib/decks";
-import { SearchPanel } from "./components/SearchPanel";
+import {
+  MAX_SIMILARITY_SEEDS,
+  SearchPanel,
+} from "./components/SearchPanel";
 import { DeckPanel } from "./components/DeckPanel";
 import { DeckSelector } from "./components/DeckSelector";
 import { CardHover } from "./components/CardHover";
 import { CardDetail } from "./components/CardDetail";
 import { ExportButton } from "./components/ExportButton";
 import { ImportButton } from "./components/ImportButton";
+import { AuthButton } from "./components/AuthButton";
+import { AppIcon } from "./components/AppIcon";
 import type { ScryfallCard } from "./lib/types";
+import { oracleIdForCard } from "./lib/cardIdentity";
 import { getCardById } from "./lib/scryfall";
 
 type HoverState = {
@@ -20,24 +26,16 @@ type HoverState = {
   y: number;
 };
 
-const SPLIT_KEY = "deckwright:split:v1";
-
 export default function Home() {
   const decks = useDecks();
   const [hover, setHover] = useState<HoverState | null>(null);
   const [selected, setSelected] = useState<ScryfallCard | null>(null);
+  const [semanticRules, setSemanticRules] = useState(false);
+  const [similaritySeeds, setSimilaritySeeds] = useState<ScryfallCard[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [leftPct, setLeftPct] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
-
-  useEffect(() => {
-    const savedH = window.localStorage.getItem(SPLIT_KEY);
-    if (savedH) {
-      const n = Number(savedH);
-      if (Number.isFinite(n) && n >= 20 && n <= 80) setLeftPct(n);
-    }
-  }, []);
 
   useEffect(() => {
     function endDrag() {
@@ -45,7 +43,6 @@ export default function Home() {
       draggingRef.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      window.localStorage.setItem(SPLIT_KEY, String(leftPct));
     }
     function onMove(e: MouseEvent) {
       if (!draggingRef.current) return;
@@ -93,6 +90,25 @@ export default function Home() {
     refreshPricesFn(activeIdForPrices);
   }, [activeIdForPrices, refreshPricesFn]);
 
+  const handleToggleSimilaritySeed = useCallback((card: ScryfallCard) => {
+    const oracleId = oracleIdForCard(card);
+    if (!oracleId) return;
+
+    setSimilaritySeeds((seeds) => {
+      if (seeds.some((seed) => oracleIdForCard(seed) === oracleId)) {
+        return seeds.filter((seed) => oracleIdForCard(seed) !== oracleId);
+      }
+      if (seeds.length >= MAX_SIMILARITY_SEEDS) return seeds;
+      return [...seeds, card];
+    });
+  }, []);
+
+  const handleRemoveSimilaritySeed = useCallback((oracleId: string) => {
+    setSimilaritySeeds((seeds) =>
+      seeds.filter((seed) => oracleIdForCard(seed) !== oracleId)
+    );
+  }, []);
+
   const { undo, redo, canUndo, canRedo } = decks;
 
   const handleUndo = useCallback(() => {
@@ -127,43 +143,110 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, [handleUndo, handleRedo]);
 
+  const active = decks.activeDeck;
+  const handlePreviewDeckQuantityChange = useCallback(
+    (card: ScryfallCard, quantity: number) => {
+      if (!active) return;
+      const safeQuantity = Math.max(0, Math.min(255, Math.floor(quantity)));
+      const current = active.entries.find((entry) => entry.cardId === card.id);
+
+      if (current) {
+        decks.setQuantity(active.id, card.id, safeQuantity);
+        return;
+      }
+
+      if (safeQuantity > 0) {
+        decks.addCard(active.id, card, safeQuantity);
+      }
+    },
+    [active, decks]
+  );
+
   if (!decks.hydrated) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-subtle">
-        Loading…
+      <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-8 text-sm text-text-subtle">
+        <div className="empty-pill flex items-center gap-3 rounded-full px-4 py-2">
+          <span className="accent-dot h-2.5 w-2.5 animate-pulse rounded-full" />
+          Loading deck workspace
+        </div>
       </div>
     );
   }
 
-  const active = decks.activeDeck;
+  if (!decks.isAuthenticated) {
+    return (
+      <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-6">
+        <div className="workspace-panel rainbow-edge animate-panel flex w-full max-w-md flex-col items-center gap-5 overflow-hidden rounded-lg px-8 py-10 text-center">
+          <AppIcon size={56} className="shadow-sm" />
+          <div>
+            <h1 className="text-2xl font-semibold text-text">
+              magicaldeckgatherer
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-text-muted">
+              A focused Magic deck workspace with saved decks, card search, and
+              playtesting.
+            </p>
+          </div>
+          <AuthButton />
+        </div>
+      </div>
+    );
+  }
+
+  const activeCardCount =
+    active?.entries.reduce((n, entry) => n + entry.quantity, 0) ?? 0;
+  const selectedOracleId = selected ? oracleIdForCard(selected) : undefined;
+  const selectedIsSimilaritySeed =
+    selectedOracleId !== undefined &&
+    similaritySeeds.some((seed) => oracleIdForCard(seed) === selectedOracleId);
+  const similaritySeedDisabled =
+    selected !== null &&
+    !selectedIsSimilaritySeed &&
+    similaritySeeds.length >= MAX_SIMILARITY_SEEDS;
+  const selectedDeckEntry = selected
+    ? active?.entries.find((entry) => entry.cardId === selected.id)
+    : undefined;
+  const selectedDeckQuantity = selectedDeckEntry?.quantity ?? 0;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
-        <div className="flex items-center gap-2">
+    <div className="app-shell-bg flex min-h-0 flex-1 flex-col overflow-hidden">
+      <header className="app-header flex shrink-0 flex-wrap items-center justify-between gap-3 px-3 py-2.5 sm:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="hidden items-center gap-2 pr-1 sm:flex">
+            <AppIcon size={34} className="shadow-sm ring-1 ring-white/80" />
+            <div className="leading-tight">
+              <div className="text-sm font-semibold text-text">
+                magicaldeckgatherer
+              </div>
+              <div className="text-[11px] text-text-subtle">MTG builder</div>
+            </div>
+          </div>
           <button
             onClick={() => setSelectorOpen(true)}
-            className="flex items-center gap-2 rounded-md border border-border bg-white px-2.5 py-1.5 text-sm text-text-muted transition hover:border-accent hover:text-accent"
+            className="control flex h-9 shrink-0 items-center gap-2 px-3 text-sm"
             aria-label="Open deck list"
             title="Your decks"
           >
             <MenuIcon />
             <span className="hidden sm:inline">Decks</span>
-            <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] tabular-nums text-text-subtle">
+            <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] tabular-nums text-text-subtle shadow-sm ring-1 ring-border/70">
               {decks.decks.length}
             </span>
           </button>
           {active ? (
-            <>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               <DeckNameEditor
                 key={active.id}
                 name={active.name}
                 onRename={(n) => decks.renameDeck(active.id, n)}
               />
+              <span className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium tabular-nums text-text-muted">
+                {activeCardCount} cards
+              </span>
               <select
                 value={active.format}
                 onChange={(e) => decks.setFormat(active.id, e.target.value)}
-                className="rounded-md border border-border bg-white px-2 py-1 text-xs text-text-muted"
+                className="control px-2.5 py-1.5 text-xs capitalize"
                 aria-label="Deck format"
               >
                 <option value="commander">Commander</option>
@@ -179,13 +262,14 @@ export default function Home() {
                 disabled={active.entries.length === 0}
                 onClear={() => decks.clearDeck(active.id)}
               />
-            </>
+            </div>
           ) : (
-            <span className="ml-2 text-sm text-text-subtle">No active deck</span>
+            <span className="ml-1 text-sm text-text-subtle">No active deck</span>
           )}
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <AuthButton />
           {active && (
             <ImportButton
               onImport={(entries, mode) =>
@@ -203,7 +287,7 @@ export default function Home() {
           {active && active.entries.length > 0 && (
             <Link
               href={`/play/?deck=${encodeURIComponent(active.id)}`}
-              className="mr-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-accent-hover"
+              className="control-primary mr-1 flex h-9 items-center px-3 text-xs font-semibold"
               title="Playtest this deck"
             >
               Playtest
@@ -214,7 +298,7 @@ export default function Home() {
             disabled={!canUndo}
             title="Undo (⌘Z)"
             aria-label="Undo"
-            className="rounded-md border border-border bg-white p-1.5 text-text-muted transition hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text-muted"
+            className="control p-2 disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
           >
             <UndoIcon />
           </button>
@@ -223,12 +307,28 @@ export default function Home() {
             disabled={!canRedo}
             title="Redo (⌘⇧Z)"
             aria-label="Redo"
-            className="rounded-md border border-border bg-white p-1.5 text-text-muted transition hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text-muted"
+            className="control p-2 disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
           >
             <RedoIcon />
           </button>
         </div>
       </header>
+
+      {decks.notice && (
+        <div
+          role="status"
+          className="flex items-center justify-between border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-xs text-amber-900 shadow-sm"
+        >
+          <span>{decks.notice}</span>
+          <button
+            onClick={decks.clearNotice}
+            className="rounded px-1.5 py-0.5 text-amber-800 hover:bg-amber-100"
+            aria-label="Dismiss notice"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <DeckSelector
         open={selectorOpen}
@@ -242,14 +342,18 @@ export default function Home() {
 
       <main
         ref={containerRef}
-        className="flex min-h-0 flex-1 flex-col lg:flex-row"
+        className="flex min-h-0 flex-1 flex-col gap-3 p-2 sm:p-3 lg:flex-row lg:gap-4 lg:p-4"
       >
         <section
-          className="flex min-h-0 flex-1 flex-col overflow-hidden border-b border-border lg:flex-none lg:border-b-0 lg:border-r"
+          className="workspace-panel rainbow-edge animate-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg lg:flex-none"
           style={{ flexBasis: `${leftPct}%` }}
         >
           <SearchPanel
             previewCardId={selected?.id ?? null}
+            semanticRules={semanticRules}
+            onSemanticRulesChange={setSemanticRules}
+            similaritySeeds={similaritySeeds}
+            onRemoveSimilaritySeed={handleRemoveSimilaritySeed}
             onSelect={(card) => setSelected(card)}
             onAdd={(card) => active && decks.addCard(active.id, card)}
             onHover={(h) => setHover(h)}
@@ -263,23 +367,25 @@ export default function Home() {
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize search and deck panels"
-          className="group hidden shrink-0 cursor-col-resize items-stretch bg-border hover:bg-accent/30 lg:flex"
-          style={{ width: 6 }}
+          className="group -mx-2 hidden shrink-0 cursor-col-resize items-stretch rounded-full transition hover:bg-white/60 lg:flex"
+          style={{ width: 10 }}
         >
-          <div className="m-auto h-12 w-[3px] rounded-full bg-border-strong transition-colors group-hover:bg-accent" />
+          <div className="m-auto h-14 w-[3px] rounded-full bg-border-strong transition-colors group-hover:bg-[image:var(--rainbow)]" />
         </div>
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <section className="workspace-panel rainbow-edge animate-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg">
           <div
             className="flex shrink-0 flex-col overflow-hidden border-b border-border"
-            style={{ height: "40vh" }}
+            style={selected ? undefined : { height: "var(--workspace-top-height)" }}
           >
             {selected ? (
               <CardDetail
                 card={selected}
                 onBack={() => setSelected(null)}
-                onAdd={(card, qty) =>
-                  active && decks.addCard(active.id, card, qty)
-                }
+                deckQuantity={selectedDeckQuantity}
+                onDeckQuantityChange={handlePreviewDeckQuantityChange}
+                onToggleSimilaritySeed={handleToggleSimilaritySeed}
+                isSimilaritySeed={selectedIsSimilaritySeed}
+                similaritySeedDisabled={similaritySeedDisabled}
               />
             ) : (
               <PreviewPlaceholder />
@@ -298,8 +404,8 @@ export default function Home() {
                 onRefreshPrices={handleRefreshPrices}
               />
             ) : (
-              <div className="flex h-full items-center justify-center p-8 text-sm text-text-subtle">
-                No active deck. Open the Decks menu to create one.
+              <div className="flex h-full items-center justify-center bg-surface p-8 text-sm text-text-subtle">
+                <div className="empty-pill rounded-full px-4 py-2">No active deck</div>
               </div>
             )}
           </div>
@@ -324,8 +430,11 @@ function DeckNameEditor({
   name: string;
   onRename: (name: string) => void;
 }) {
-  const [value, setValue] = useState(name);
-  useEffect(() => setValue(name), [name]);
+  const [draft, setDraft] = useState({ source: name, value: name });
+  const value = draft.source === name ? draft.value : name;
+  function setValue(nextValue: string) {
+    setDraft({ source: name, value: nextValue });
+  }
   function commit() {
     const trimmed = value.trim();
     if (trimmed && trimmed !== name) onRename(trimmed);
@@ -345,7 +454,7 @@ function DeckNameEditor({
         }
       }}
       aria-label="Deck name"
-      className="ml-2 min-w-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-base font-semibold tracking-tight outline-none transition hover:border-border focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
+      className="min-w-0 flex-1 rounded-lg border border-transparent bg-white/0 px-2 py-1.5 text-base font-semibold outline-none transition hover:border-border hover:bg-white/60 focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
     />
   );
 }
@@ -366,13 +475,13 @@ function ClearDeckButton({
             onClear();
             setConfirm(false);
           }}
-          className="rounded-md bg-[color:var(--danger)] px-2.5 py-1 text-xs font-medium text-white hover:brightness-110"
+          className="rounded-lg bg-[color:var(--danger)] px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-110"
         >
           Clear deck
         </button>
         <button
           onClick={() => setConfirm(false)}
-          className="rounded-md border border-border bg-white px-2 py-1 text-xs text-text-muted hover:text-text"
+          className="control px-2.5 py-1.5 text-xs"
         >
           Cancel
         </button>
@@ -385,7 +494,7 @@ function ClearDeckButton({
       disabled={disabled}
       title="Remove all cards"
       aria-label="Remove all cards"
-      className="rounded-md border border-border bg-white p-1.5 text-text-muted transition hover:border-[color:var(--danger)] hover:text-[color:var(--danger)] disabled:opacity-40 disabled:hover:border-border disabled:hover:text-text-muted"
+      className="control p-2 hover:border-[color:var(--danger)] hover:text-[color:var(--danger)] disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
     >
       <TrashIcon />
     </button>
@@ -411,23 +520,30 @@ function TrashIcon() {
 
 function PreviewPlaceholder() {
   return (
-    <div className="flex h-full items-center justify-center p-8 text-center">
+    <div className="flex h-full items-center justify-center bg-surface p-8 text-center">
       <div className="flex flex-col items-center gap-3 text-text-subtle">
-        <svg
-          viewBox="0 0 40 40"
-          width={40}
-          height={40}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="opacity-60"
-        >
-          <rect x="9" y="5" width="22" height="30" rx="3" />
-          <path d="M13 13h14M13 19h10" />
-        </svg>
-        <div className="text-sm">Click a search result to preview it here.</div>
+        <div className="empty-pill flex h-14 w-14 items-center justify-center rounded-full">
+          <svg
+            viewBox="0 0 40 40"
+            width={34}
+            height={34}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="opacity-70"
+          >
+            <rect x="9" y="5" width="22" height="30" rx="3" />
+            <path d="M13 13h14M13 19h10" />
+          </svg>
+        </div>
+        <div>
+          <div className="text-sm font-medium text-text-muted">
+            No card selected
+          </div>
+          <div className="mt-1 text-xs">Card details appear here.</div>
+        </div>
       </div>
     </div>
   );

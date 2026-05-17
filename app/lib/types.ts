@@ -38,7 +38,11 @@ export type ScryfallCard = {
   image_uris?: ScryfallImageUris;
   card_faces?: ScryfallCardFace[];
   scryfall_uri?: string;
+  legalities?: Record<string, string>;
+  printings?: string[];
   prices?: { usd?: string | null };
+  similarity?: number;
+  rerank_score?: number;
 };
 
 export type ScryfallSearchResponse = {
@@ -94,7 +98,10 @@ export type Deck = {
   id: string;
   name: string;
   format: string;
+  cardCount: number;
   createdAt: number;
   updatedAt: number;
   entries: DeckEntry[];
 };
+
+export type DeckSummary = Omit<Deck, "entries">;

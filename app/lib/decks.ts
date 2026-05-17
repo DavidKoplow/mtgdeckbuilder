@@ -1,63 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Deck, DeckEntry, ScryfallCard } from "./types";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import type { Deck, DeckEntry, DeckSummary, ScryfallCard } from "./types";
 import { getCardImage, getCardsByIdentifiers } from "./scryfall";
 
-const STORAGE_KEY = "deckwright:decks:v1";
-const ACTIVE_KEY = "deckwright:active-deck:v1";
+type Snapshot = { deck: Deck; activeId: string };
 
-type Snapshot = { decks: Deck[]; activeId: string | null };
+const CARD_QUANTITY_LIMIT = 255;
+const MAX_HISTORY = 100;
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-function emptyDeck(name = "Untitled Deck"): Deck {
-  const now = Date.now();
-  return {
-    id: uid(),
-    name,
-    format: "commander",
-    createdAt: now,
-    updatedAt: now,
-    entries: [],
-  };
-}
-
-function cloneDecks(decks: Deck[]): Deck[] {
-  return decks.map((d) => ({ ...d, entries: d.entries.map((e) => ({ ...e })) }));
-}
-
-function readDecks(): Deck[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Deck[];
-    if (!Array.isArray(parsed)) return [];
-    return parsed;
-  } catch {
-    return [];
-  }
-}
-
-function writeDecks(decks: Deck[]) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(decks));
-  } catch {
-    // quota or disabled — ignore
-  }
-}
-
-function readActiveId(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(ACTIVE_KEY);
-}
-
-function writeActiveId(id: string | null) {
-  if (id) window.localStorage.setItem(ACTIVE_KEY, id);
-  else window.localStorage.removeItem(ACTIVE_KEY);
+function cloneDeck(deck: Deck): Deck {
+  return { ...deck, entries: deck.entries.map((entry) => ({ ...entry })) };
 }
 
 export function cardToEntry(card: ScryfallCard, quantity = 1): DeckEntry {
@@ -79,270 +38,293 @@ export function cardToEntry(card: ScryfallCard, quantity = 1): DeckEntry {
   };
 }
 
-const MAX_HISTORY = 100;
-
 export function useDecks() {
-  const [decks, setDecks] = useState<Deck[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false);
+  const auth = useConvexAuth();
+  const deckSummariesResult = useQuery(
+    api.decks.listDecks,
+    auth.isAuthenticated ? {} : "skip"
+  );
+  const deckSummaries = deckSummariesResult ?? [];
+  const deckSummariesLoaded =
+    !auth.isAuthenticated || deckSummariesResult !== undefined;
+  const [selectedActiveId, setSelectedActiveId] = useState<string | null>(null);
+  const activeId = useMemo(
+    () => validActiveId(deckSummaries, selectedActiveId),
+    [deckSummaries, selectedActiveId]
+  );
+  const activeDeck = useQuery(
+    api.decks.get,
+    auth.isAuthenticated && activeId ? { deckId: activeId } : "skip"
+  );
+
+  const createMutation = useMutation(api.decks.create);
+  const renameMutation = useMutation(api.decks.rename);
+  const setFormatMutation = useMutation(api.decks.setFormat);
+  const deleteMutation = useMutation(api.decks.deleteDeck);
+  const addCardMutation = useMutation(api.decks.addCard);
+  const setQuantityMutation = useMutation(api.decks.setQuantity);
+  const clearMutation = useMutation(api.decks.clear);
+  const importEntriesMutation = useMutation(api.decks.importEntries);
+  const replaceDeckMutation = useMutation(api.decks.replaceDeck);
+  const patchPricesMutation = useMutation(api.decks.patchPrices);
+
   const [past, setPast] = useState<Snapshot[]>([]);
   const [future, setFuture] = useState<Snapshot[]>([]);
-
-  // Refs mirror state so history ops read the latest values even across rapid dispatches.
-  const decksRef = useRef<Deck[]>([]);
-  const activeRef = useRef<string | null>(null);
-  decksRef.current = decks;
-  activeRef.current = activeId;
+  const [notice, setNotice] = useState<string | null>(null);
+  const activeDeckRef = useRef<Deck | null>(null);
+  const activeIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const stored = readDecks();
-    if (stored.length === 0) {
-      const first = emptyDeck("My First Deck");
-      setDecks([first]);
-      setActiveId(first.id);
-      writeDecks([first]);
-      writeActiveId(first.id);
-    } else {
-      setDecks(stored);
-      const storedActive = readActiveId();
-      const valid =
-        storedActive && stored.some((d) => d.id === storedActive)
-          ? storedActive
-          : stored[0].id;
-      setActiveId(valid);
-      writeActiveId(valid);
-    }
-    setHydrated(true);
-  }, []);
+    activeDeckRef.current = activeDeck ?? null;
+    activeIdRef.current = activeId;
+  }, [activeDeck, activeId]);
 
-  const persist = useCallback((next: Deck[]) => {
-    setDecks(next);
-    writeDecks(next);
-  }, []);
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(null), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
-  const setActive = useCallback((id: string) => {
-    setActiveId(id);
-    writeActiveId(id);
-  }, []);
+  const hydrated =
+    !auth.isLoading &&
+    (!auth.isAuthenticated ||
+      (deckSummariesLoaded && (!activeId || activeDeck !== undefined)));
 
-  // Commit a mutation and record the prior state for undo.
-  const commit = useCallback(
-    (nextDecks: Deck[], nextActive: string | null) => {
-      const snap: Snapshot = {
-        decks: cloneDecks(decksRef.current),
-        activeId: activeRef.current,
-      };
-      setPast((p) => {
-        const next = [...p, snap];
-        return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
-      });
-      setFuture([]);
-      persist(nextDecks);
-      if (nextActive !== activeRef.current) {
-        setActiveId(nextActive);
-        writeActiveId(nextActive);
-      }
-    },
-    [persist]
+  const decks = useMemo(
+    () =>
+      deckSummaries.map((summary) =>
+        activeDeck && summary.id === activeDeck.id ? activeDeck : summary
+      ),
+    [activeDeck, deckSummaries]
   );
+
+  const recordActiveSnapshot = useCallback(() => {
+    const deck = activeDeckRef.current;
+    const snapshotActiveId = activeIdRef.current;
+    if (!deck || !snapshotActiveId) return;
+
+    setPast((p) => {
+      const next = [...p, { deck: cloneDeck(deck), activeId: snapshotActiveId }];
+      return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+    });
+    setFuture([]);
+  }, []);
+
+  const showQuantityLimit = useCallback((cardName?: string) => {
+    setNotice(
+      `${cardName ?? "That card"} is limited to ${CARD_QUANTITY_LIMIT} copies per deck.`
+    );
+  }, []);
 
   const createDeck = useCallback(
-    (name?: string) => {
-      const d = emptyDeck(name || "Untitled Deck");
-      const nextDecks = [...decksRef.current, d];
-      commit(nextDecks, d.id);
-      return d.id;
+    async (name?: string) => {
+      if (!auth.isAuthenticated) return null;
+
+      const deckId = uid();
+      const createdId = await createMutation({
+        deckId,
+        name: name || "Untitled Deck",
+      });
+      setSelectedActiveId(createdId);
+      return createdId;
     },
-    [commit]
+    [auth.isAuthenticated, createMutation]
   );
 
-  // Rename / format are "silent" — no history. Coalesces keystroke-level edits.
-  const renameDeck = useCallback((id: string, name: string) => {
-    const next = decksRef.current.map((d) =>
-      d.id === id ? { ...d, name, updatedAt: Date.now() } : d
-    );
-    setDecks(next);
-    writeDecks(next);
+  const setActive = useCallback((id: string) => {
+    setSelectedActiveId(id);
   }, []);
 
-  const setFormat = useCallback((id: string, format: string) => {
-    const next = decksRef.current.map((d) =>
-      d.id === id ? { ...d, format, updatedAt: Date.now() } : d
-    );
-    setDecks(next);
-    writeDecks(next);
-  }, []);
+  const renameDeck = useCallback(
+    async (id: string, name: string) => {
+      if (!auth.isAuthenticated) return;
+      await renameMutation({ deckId: id, name });
+    },
+    [auth.isAuthenticated, renameMutation]
+  );
+
+  const setFormat = useCallback(
+    async (id: string, format: string) => {
+      if (!auth.isAuthenticated) return;
+      await setFormatMutation({ deckId: id, format });
+    },
+    [auth.isAuthenticated, setFormatMutation]
+  );
 
   const deleteDeck = useCallback(
-    (id: string) => {
-      const current = decksRef.current;
-      const remaining = current.filter((d) => d.id !== id);
-      if (remaining.length === 0) {
-        const fresh = emptyDeck("Untitled Deck");
-        commit([fresh], fresh.id);
-        return;
+    async (id: string) => {
+      if (!auth.isAuthenticated) return;
+      await deleteMutation({ deckId: id });
+      if (activeIdRef.current === id) {
+        setSelectedActiveId(null);
       }
-      const nextActive =
-        activeRef.current === id ? remaining[0].id : activeRef.current;
-      commit(remaining, nextActive);
     },
-    [commit]
+    [auth.isAuthenticated, deleteMutation]
   );
 
   const addCard = useCallback(
-    (deckId: string, card: ScryfallCard, quantity = 1) => {
-      const next = decksRef.current.map((d) => {
-        if (d.id !== deckId) return d;
-        const idx = d.entries.findIndex((e) => e.cardId === card.id);
-        let entries: DeckEntry[];
-        if (idx >= 0) {
-          entries = d.entries.slice();
-          entries[idx] = {
-            ...entries[idx],
-            quantity: entries[idx].quantity + quantity,
-          };
-        } else {
-          entries = [...d.entries, cardToEntry(card, quantity)];
-        }
-        return { ...d, entries, updatedAt: Date.now() };
+    async (deckId: string, card: ScryfallCard, quantity = 1) => {
+      if (!auth.isAuthenticated) return;
+      const deck = activeDeckRef.current;
+      const current = deck?.entries.find((entry) => entry.cardId === card.id);
+      const requestedQuantity = Math.max(1, Math.floor(quantity));
+      const available = CARD_QUANTITY_LIMIT - (current?.quantity ?? 0);
+
+      if (available <= 0) {
+        showQuantityLimit(card.name);
+        return;
+      }
+
+      const safeQuantity = Math.min(requestedQuantity, available);
+      if (safeQuantity < requestedQuantity) {
+        showQuantityLimit(card.name);
+      }
+
+      recordActiveSnapshot();
+      await addCardMutation({
+        deckId,
+        card: cardToEntry(card, safeQuantity),
+        quantity: safeQuantity,
       });
-      commit(next, activeRef.current);
     },
-    [commit]
+    [
+      addCardMutation,
+      auth.isAuthenticated,
+      recordActiveSnapshot,
+      showQuantityLimit,
+    ]
   );
 
   const setQuantity = useCallback(
-    (deckId: string, cardId: string, quantity: number) => {
-      const next = decksRef.current.map((d) => {
-        if (d.id !== deckId) return d;
-        let entries: DeckEntry[];
-        if (quantity <= 0) {
-          entries = d.entries.filter((e) => e.cardId !== cardId);
-        } else {
-          entries = d.entries.map((e) =>
-            e.cardId === cardId ? { ...e, quantity } : e
-          );
-        }
-        return { ...d, entries, updatedAt: Date.now() };
-      });
-      commit(next, activeRef.current);
+    async (deckId: string, cardId: string, quantity: number) => {
+      if (!auth.isAuthenticated) return;
+      const current = activeDeckRef.current?.entries.find(
+        (entry) => entry.cardId === cardId
+      );
+      const safeQuantity =
+        quantity <= 0
+          ? quantity
+          : Math.min(Math.floor(quantity), CARD_QUANTITY_LIMIT);
+
+      if (quantity > CARD_QUANTITY_LIMIT) {
+        showQuantityLimit(current?.name);
+      }
+      if (current && current.quantity === safeQuantity) return;
+
+      recordActiveSnapshot();
+      await setQuantityMutation({ deckId, cardId, quantity: safeQuantity });
     },
-    [commit]
+    [
+      auth.isAuthenticated,
+      recordActiveSnapshot,
+      setQuantityMutation,
+      showQuantityLimit,
+    ]
   );
 
   const clearDeck = useCallback(
-    (deckId: string) => {
-      const next = decksRef.current.map((d) =>
-        d.id === deckId ? { ...d, entries: [], updatedAt: Date.now() } : d
-      );
-      commit(next, activeRef.current);
+    async (deckId: string) => {
+      if (!auth.isAuthenticated) return;
+      recordActiveSnapshot();
+      await clearMutation({ deckId });
     },
-    [commit]
+    [auth.isAuthenticated, clearMutation, recordActiveSnapshot]
   );
 
   const importEntries = useCallback(
-    (deckId: string, incoming: DeckEntry[], mode: "merge" | "replace") => {
-      const next = decksRef.current.map((d) => {
-        if (d.id !== deckId) return d;
-        if (mode === "replace") {
-          return { ...d, entries: incoming, updatedAt: Date.now() };
-        }
-        const byId = new Map(d.entries.map((e) => [e.cardId, { ...e }]));
-        for (const e of incoming) {
-          const existing = byId.get(e.cardId);
-          if (existing) {
-            existing.quantity += e.quantity;
-          } else {
-            byId.set(e.cardId, { ...e });
-          }
-        }
-        return { ...d, entries: Array.from(byId.values()), updatedAt: Date.now() };
-      });
-      commit(next, activeRef.current);
-    },
-    [commit]
-  );
-
-  // Silent (no history) price backfill — prices change over time and users
-  // don't expect undo to revert them. Only touches entries that need it.
-  const refreshPrices = useCallback(async (deckId: string) => {
-    const deck = decksRef.current.find((d) => d.id === deckId);
-    if (!deck) return;
-    const needIds = deck.entries
-      .filter((e) => e.priceUsd === undefined)
-      .map((e) => e.cardId);
-    if (needIds.length === 0) return;
-    try {
-      const cards = await getCardsByIdentifiers(
-        needIds.map((id) => ({ id }))
-      );
-      if (cards.length === 0) return;
-      const priceById = new Map<string, number | undefined>();
-      for (const c of cards) {
-        const raw = c.prices?.usd;
-        const n = raw != null && raw !== "" ? Number(raw) : undefined;
-        priceById.set(c.id, Number.isFinite(n) ? n : undefined);
+    async (deckId: string, incoming: DeckEntry[], mode: "merge" | "replace") => {
+      if (!auth.isAuthenticated) return;
+      if (incomingWouldExceedLimit(activeDeckRef.current, incoming, mode)) {
+        showQuantityLimit("One or more cards");
       }
-      const current = decksRef.current;
-      const patched = current.map((d) => {
-        if (d.id !== deckId) return d;
-        let touched = false;
-        const entries = d.entries.map((e) => {
-          if (e.priceUsd !== undefined) return e;
-          if (!priceById.has(e.cardId)) return e;
-          touched = true;
-          return { ...e, priceUsd: priceById.get(e.cardId) };
-        });
-        return touched ? { ...d, entries } : d;
-      });
-      setDecks(patched);
-      writeDecks(patched);
-    } catch {
-      // Network errors: silently leave prices unknown.
-    }
-  }, []);
-
-  const undo = useCallback(() => {
-    setPast((p) => {
-      if (p.length === 0) return p;
-      const prev = p[p.length - 1];
-      const currentSnap: Snapshot = {
-        decks: cloneDecks(decksRef.current),
-        activeId: activeRef.current,
-      };
-      setFuture((f) => [currentSnap, ...f].slice(0, MAX_HISTORY));
-      persist(prev.decks);
-      setActiveId(prev.activeId);
-      writeActiveId(prev.activeId);
-      return p.slice(0, -1);
-    });
-  }, [persist]);
-
-  const redo = useCallback(() => {
-    setFuture((f) => {
-      if (f.length === 0) return f;
-      const nextSnap = f[0];
-      const currentSnap: Snapshot = {
-        decks: cloneDecks(decksRef.current),
-        activeId: activeRef.current,
-      };
-      setPast((p) => [...p, currentSnap].slice(-MAX_HISTORY));
-      persist(nextSnap.decks);
-      setActiveId(nextSnap.activeId);
-      writeActiveId(nextSnap.activeId);
-      return f.slice(1);
-    });
-  }, [persist]);
-
-  const activeDeck = useMemo(
-    () => decks.find((d) => d.id === activeId) ?? null,
-    [decks, activeId]
+      recordActiveSnapshot();
+      await importEntriesMutation({ deckId, entries: incoming, mode });
+    },
+    [
+      auth.isAuthenticated,
+      importEntriesMutation,
+      recordActiveSnapshot,
+      showQuantityLimit,
+    ]
   );
+
+  const refreshPrices = useCallback(
+    async (deckId: string) => {
+      if (!auth.isAuthenticated) return;
+      const deck = activeDeckRef.current;
+      if (!deck || deck.id !== deckId) return;
+
+      const needIds = deck.entries
+        .filter((entry) => entry.priceUsd === undefined)
+        .map((entry) => entry.cardId);
+      if (needIds.length === 0) return;
+
+      try {
+        const cards = await getCardsByIdentifiers(needIds.map((id) => ({ id })));
+        if (cards.length === 0) return;
+
+        const prices = cards
+          .map((card) => {
+            const raw = card.prices?.usd;
+            const priceUsd = raw != null && raw !== "" ? Number(raw) : undefined;
+            return {
+              cardId: card.id,
+              priceUsd: Number.isFinite(priceUsd) ? priceUsd : undefined,
+            };
+          })
+          .filter((price) => price.priceUsd !== undefined);
+
+        if (prices.length > 0) {
+          await patchPricesMutation({ deckId, prices });
+        }
+      } catch {
+        // Network errors leave prices unknown until a later refresh.
+      }
+    },
+    [auth.isAuthenticated, patchPricesMutation]
+  );
+
+  const undo = useCallback(async () => {
+    const prev = past[past.length - 1];
+    const current = activeDeckRef.current;
+    const currentActiveId = activeIdRef.current;
+    if (!prev || !current || !currentActiveId || !auth.isAuthenticated) return;
+
+    setPast((p) => p.slice(0, -1));
+    setFuture((f) =>
+      [{ deck: cloneDeck(current), activeId: currentActiveId }, ...f].slice(
+        0,
+        MAX_HISTORY
+      )
+    );
+    await replaceDeckMutation({ deck: prev.deck });
+    setSelectedActiveId(prev.activeId);
+  }, [auth.isAuthenticated, past, replaceDeckMutation]);
+
+  const redo = useCallback(async () => {
+    const next = future[0];
+    const current = activeDeckRef.current;
+    const currentActiveId = activeIdRef.current;
+    if (!next || !current || !currentActiveId || !auth.isAuthenticated) return;
+
+    setFuture((f) => f.slice(1));
+    setPast((p) =>
+      [...p, { deck: cloneDeck(current), activeId: currentActiveId }].slice(
+        -MAX_HISTORY
+      )
+    );
+    await replaceDeckMutation({ deck: next.deck });
+    setSelectedActiveId(next.activeId);
+  }, [auth.isAuthenticated, future, replaceDeckMutation]);
 
   return {
     hydrated,
+    isAuthenticated: auth.isAuthenticated,
+    isLoading: auth.isLoading,
+    notice,
+    clearNotice: () => setNotice(null),
     decks,
-    activeDeck,
+    activeDeck: activeDeck ?? null,
     activeId,
     setActive,
     createDeck,
@@ -359,4 +341,50 @@ export function useDecks() {
     canUndo: past.length > 0,
     canRedo: future.length > 0,
   };
+}
+
+export function useDeck(deckId: string | null) {
+  const auth = useConvexAuth();
+  const deck = useQuery(
+    api.decks.get,
+    auth.isAuthenticated && deckId ? { deckId } : "skip"
+  );
+
+  return {
+    hydrated:
+      !auth.isLoading &&
+      (!auth.isAuthenticated || !deckId || deck !== undefined),
+    isAuthenticated: auth.isAuthenticated,
+    deck: deck ?? null,
+  };
+}
+
+function validActiveId(
+  decks: DeckSummary[],
+  current: string | null
+): string | null {
+  if (current && decks.some((deck) => deck.id === current)) return current;
+  return decks[0]?.id ?? null;
+}
+
+function incomingWouldExceedLimit(
+  deck: Deck | null,
+  incoming: DeckEntry[],
+  mode: "merge" | "replace"
+) {
+  const quantities = new Map<string, number>();
+
+  if (mode === "merge" && deck) {
+    for (const entry of deck.entries) {
+      quantities.set(entry.cardId, entry.quantity);
+    }
+  }
+
+  for (const entry of incoming) {
+    const next = (quantities.get(entry.cardId) ?? 0) + entry.quantity;
+    if (next > CARD_QUANTITY_LIMIT) return true;
+    quantities.set(entry.cardId, next);
+  }
+
+  return false;
 }

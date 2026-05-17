@@ -162,6 +162,12 @@ export async function getCardById(
   id: string,
   signal?: AbortSignal
 ): Promise<ScryfallCard | null> {
+  if (id.startsWith("oracle:")) {
+    const oracleId = id.slice("oracle:".length);
+    const [card] = await getCardsByIdentifiers([{ oracle_id: oracleId }], signal);
+    return card ?? null;
+  }
+
   const url = `${API}/cards/${encodeURIComponent(id)}`;
   return throttled(async () => {
     const res = await fetch(url, { signal });
@@ -172,6 +178,7 @@ export async function getCardById(
 
 export type CollectionIdentifier =
   | { id: string }
+  | { oracle_id: string }
   | { name: string }
   | { name: string; set: string }
   | { collector_number: string; set: string };

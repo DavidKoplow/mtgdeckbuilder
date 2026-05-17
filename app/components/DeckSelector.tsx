@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Deck } from "../lib/types";
+import type { DeckSummary } from "../lib/types";
 
 type Props = {
   open: boolean;
   onClose: () => void;
-  decks: Deck[];
+  decks: DeckSummary[];
   activeId: string | null;
   onSelect: (id: string) => void;
   onCreate: (name?: string) => void;
@@ -36,30 +36,35 @@ export function DeckSelector({
   return (
     <>
       <div
-        className={`fixed inset-0 z-30 bg-black/25 transition-opacity ${
+        className={`fixed inset-0 z-30 bg-black/35 backdrop-blur-sm transition-opacity ${
           open ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={onClose}
         aria-hidden
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-border bg-surface shadow-xl transition-transform ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-80 max-w-[86vw] flex-col border-r border-border bg-surface shadow-2xl transition-transform ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-hidden={!open}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold">Your decks</h2>
+        <div className="flex items-center justify-between border-b border-border bg-surface-raised px-4 py-4">
+          <div>
+            <h2 className="text-sm font-semibold">Your decks</h2>
+            <div className="text-xs text-text-subtle">
+              {decks.length} saved deck{decks.length === 1 ? "" : "s"}
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => onCreate()}
-              className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white transition hover:bg-accent-hover"
+              className="control-primary px-3 py-2 text-xs font-semibold"
             >
-              + New
+              New
             </button>
             <button
               onClick={onClose}
-              className="rounded-md border border-border p-1 text-text-muted hover:text-text"
+              className="control p-2"
               aria-label="Close deck panel"
               title="Close"
             >
@@ -77,16 +82,15 @@ export function DeckSelector({
             </button>
           </div>
         </div>
-        <ul className="thin-scroll flex-1 min-h-0 overflow-y-auto py-2">
+        <ul className="thin-scroll min-h-0 flex-1 overflow-y-auto py-3">
           {decks.map((d) => {
             const active = d.id === activeId;
-            const cards = d.entries.reduce((n, e) => n + e.quantity, 0);
             return (
-              <li key={d.id} className="px-2">
+              <li key={d.id} className="px-3">
                 <div
-                  className={`group flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 transition ${
+                  className={`group flex cursor-pointer items-center gap-2 rounded-xl px-3 py-3 transition ${
                     active
-                      ? "bg-accent-subtle ring-1 ring-accent/30"
+                      ? "bg-[image:var(--rainbow-soft)] ring-1 ring-accent/35"
                       : "hover:bg-surface-subtle"
                   }`}
                   onClick={() => {
@@ -95,9 +99,9 @@ export function DeckSelector({
                   }}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{d.name}</div>
-                    <div className="text-[11px] text-text-subtle">
-                      {cards} cards · {d.format}
+                    <div className="truncate text-sm font-semibold">{d.name}</div>
+                    <div className="mt-0.5 text-[11px] capitalize text-text-subtle">
+                      {d.cardCount} cards · {d.format}
                     </div>
                   </div>
                   {confirmingId === d.id ? (
@@ -127,7 +131,7 @@ export function DeckSelector({
                         e.stopPropagation();
                         setConfirmingId(d.id);
                       }}
-                      className="shrink-0 rounded px-1 text-text-subtle opacity-0 transition hover:text-[color:var(--danger)] group-hover:opacity-100"
+                      className="shrink-0 rounded-md px-1.5 py-1 text-text-subtle opacity-0 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100"
                       title="Delete deck"
                       aria-label={`Delete ${d.name}`}
                     >
@@ -139,8 +143,8 @@ export function DeckSelector({
             );
           })}
         </ul>
-        <div className="border-t border-border px-4 py-2 text-[11px] text-text-subtle">
-          Saved locally in your browser.
+        <div className="border-t border-border bg-surface-raised px-4 py-3 text-[11px] text-text-subtle">
+          Cloud synced
         </div>
       </aside>
     </>

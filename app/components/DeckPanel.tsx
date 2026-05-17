@@ -17,7 +17,7 @@ type Props = {
 };
 
 type ViewMode = "grid" | "list";
-const VIEW_KEY = "deckwright:deckview:v1";
+type DeckSortMode = "type" | "mana" | "price";
 
 const TYPE_ORDER = [
   "Creature",
@@ -37,6 +37,87 @@ function groupOf(entry: DeckEntry): string {
   return "Other";
 }
 
+function compareByManaThenName(a: DeckEntry, b: DeckEntry): number {
+  const ca = a.cmc ?? 0;
+  const cb = b.cmc ?? 0;
+  if (ca !== cb) return ca - cb;
+  return a.name.localeCompare(b.name);
+}
+
+function compareByName(a: DeckEntry, b: DeckEntry): number {
+  return a.name.localeCompare(b.name);
+}
+
+function manaBucket(entry: DeckEntry): string {
+  const cmc = Math.max(0, Math.round(entry.cmc ?? 0));
+  return cmc >= 7 ? "MV 7+" : `MV ${cmc}`;
+}
+
+function buildDisplayGroups(
+  entries: DeckEntry[],
+  sortMode: DeckSortMode
+): Array<readonly [string, DeckEntry[]]> {
+  if (sortMode === "type") {
+    const groups = new Map<string, DeckEntry[]>();
+    for (const entry of entries) {
+      const group = groupOf(entry);
+      const groupEntries = groups.get(group) ?? [];
+      groupEntries.push(entry);
+      groups.set(group, groupEntries);
+    }
+
+    for (const groupEntries of groups.values()) {
+      groupEntries.sort(compareByManaThenName);
+    }
+
+    return TYPE_ORDER.filter((type) => groups.has(type)).map(
+      (type) => [type, groups.get(type)!] as const
+    );
+  }
+
+  if (sortMode === "mana") {
+    const groups = new Map<string, DeckEntry[]>();
+    for (const entry of entries) {
+      const bucket = manaBucket(entry);
+      const groupEntries = groups.get(bucket) ?? [];
+      groupEntries.push(entry);
+      groups.set(bucket, groupEntries);
+    }
+
+    for (const groupEntries of groups.values()) {
+      groupEntries.sort((a, b) => {
+        const typeCompare =
+          TYPE_ORDER.indexOf(groupOf(a)) - TYPE_ORDER.indexOf(groupOf(b));
+        if (typeCompare !== 0) return typeCompare;
+        return compareByName(a, b);
+      });
+    }
+
+    return Array.from(groups.entries()).sort(([a], [b]) => {
+      const bucketNumber = (label: string) =>
+        label === "MV 7+" ? 7 : Number(label.replace("MV ", ""));
+      return bucketNumber(a) - bucketNumber(b);
+    });
+  }
+
+  const priced = entries
+    .filter((entry) => typeof entry.priceUsd === "number")
+    .slice()
+    .sort((a, b) => {
+      const priceCompare = (b.priceUsd ?? 0) - (a.priceUsd ?? 0);
+      if (priceCompare !== 0) return priceCompare;
+      return compareByManaThenName(a, b);
+    });
+  const unpriced = entries
+    .filter((entry) => typeof entry.priceUsd !== "number")
+    .slice()
+    .sort(compareByManaThenName);
+  const groups: Array<readonly [string, DeckEntry[]]> = [];
+  if (priced.length > 0) groups.push(["Price high to low", priced]);
+  if (unpriced.length > 0) groups.push(["Unpriced", unpriced]);
+  return groups;
+}
+
 export function DeckPanel({
   deck,
   onSetQty,
@@ -46,15 +127,7 @@ export function DeckPanel({
   onRefreshPrices,
 }: Props) {
   const [view, setView] = useState<ViewMode>("grid");
-
-  useEffect(() => {
-    const saved = window.localStorage.getItem(VIEW_KEY);
-    if (saved === "grid" || saved === "list") setView(saved);
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(VIEW_KEY, view);
-  }, [view]);
+  const [sortMode, setSortMode] = useState<DeckSortMode>("type");
 
   // Track which card IDs we've already tried to price in this session so we
   // don't spam Scryfall for cards that genuinely have no listed USD price.
@@ -72,25 +145,7 @@ export function DeckPanel({
   }, [deck.entries, onRefreshPrices]);
 
   const { groups, totalCount, curve, colorPips, totalPrice, topExpensive, pricedCount } = useMemo(() => {
-    const groups = new Map<string, DeckEntry[]>();
-    for (const e of deck.entries) {
-      const g = groupOf(e);
-      const arr = groups.get(g) ?? [];
-      arr.push(e);
-      groups.set(g, arr);
-    }
-    for (const arr of groups.values())
-      arr.sort((a, b) => {
-        const ca = a.cmc ?? 0;
-        const cb = b.cmc ?? 0;
-        if (ca !== cb) return ca - cb;
-        return a.name.localeCompare(b.name);
-      });
-
-    const ordered = TYPE_ORDER.filter((t) => groups.has(t)).map(
-      (t) => [t, groups.get(t)!] as const
-    );
-
+    const displayGroups = buildDisplayGroups(deck.entries, sortMode);
     const totalCount = deck.entries.reduce((n, e) => n + e.quantity, 0);
 
     const curveBuckets = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -125,7 +180,7 @@ export function DeckPanel({
       .slice(0, 3);
 
     return {
-      groups: ordered,
+      groups: displayGroups,
       totalCount,
       curve: curveBuckets,
       colorPips,
@@ -133,41 +188,54 @@ export function DeckPanel({
       topExpensive,
       pricedCount,
     };
-  }, [deck.entries]);
+  }, [deck.entries, sortMode]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-surface px-4 py-2 text-xs text-text-muted">
-        <span className="font-medium text-text">{totalCount} cards</span>
-        <ColorBar pips={colorPips} />
-        <ManaCurve curve={curve} />
-        <PriceSummary
-          totalPrice={totalPrice}
-          topExpensive={topExpensive}
-          totalCount={totalCount}
-          pricedCount={pricedCount}
-        />
+      <div className="panel-heading flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-3 py-3 text-xs text-text-muted sm:px-4">
+        <div className="mr-1">
+          <div className="text-sm font-semibold text-text">Deck</div>
+          <div className="text-xs tabular-nums text-text-subtle">
+            {totalCount} cards
+          </div>
+        </div>
+        <div className="flex min-w-[11rem] flex-1 flex-wrap items-center gap-x-4 gap-y-2">
+          <ColorBar pips={colorPips} />
+          <ManaCurve curve={curve} />
+          <PriceSummary
+            totalPrice={totalPrice}
+            topExpensive={topExpensive}
+            totalCount={totalCount}
+            pricedCount={pricedCount}
+          />
+        </div>
+        <SortSelect sortMode={sortMode} onChange={setSortMode} />
         <ViewToggle view={view} onChange={setView} />
       </div>
 
-      <div className="thin-scroll flex-1 min-h-0 overflow-y-auto bg-surface">
+      <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-surface">
         {deck.entries.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-8 text-center text-sm text-text-subtle">
-            Your deck is empty. Search on the left and hit + to add.
+          <div className="flex h-full items-center justify-center p-8 text-center">
+            <div className="empty-pill rounded-full px-4 py-2 text-sm text-text-subtle">
+              Empty deck
+            </div>
           </div>
         ) : (
           <div className={view === "grid" ? "space-y-4 p-4" : "space-y-4 py-2"}>
             {groups.map(([group, entries]) => (
               <section key={group}>
                 <header
-                  className={`mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted ${
+                  className={`mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase text-text-muted ${
                     view === "list" ? "px-4" : ""
                   }`}
                 >
-                  {group}
+                  <span>{group}</span>
+                  <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text-subtle">
+                    {entries.reduce((n, entry) => n + entry.quantity, 0)}
+                  </span>
                 </header>
                 {view === "grid" ? (
-                  <ul className="grid grid-cols-[repeat(auto-fill,minmax(calc(25%-0.5625rem),1fr))] gap-3">
+                  <ul className="grid grid-cols-[repeat(auto-fill,minmax(7.25rem,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(8.25rem,1fr))]">
                     {entries.map((e) => (
                       <DeckTile
                         key={e.cardId}
@@ -180,7 +248,7 @@ export function DeckPanel({
                     ))}
                   </ul>
                 ) : (
-                  <ul className="divide-y divide-border border-y border-border">
+                  <ul className="divide-y divide-border border-y border-border bg-white">
                     {entries.map((e) => (
                       <DeckRow
                         key={e.cardId}
@@ -202,6 +270,30 @@ export function DeckPanel({
   );
 }
 
+function SortSelect({
+  sortMode,
+  onChange,
+}: {
+  sortMode: DeckSortMode;
+  onChange: (mode: DeckSortMode) => void;
+}) {
+  return (
+    <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-white/78 px-2.5 text-xs text-text-muted shadow-sm">
+      <span className="font-medium">Sort</span>
+      <select
+        value={sortMode}
+        onChange={(e) => onChange(e.target.value as DeckSortMode)}
+        className="bg-transparent text-xs font-medium text-text outline-none"
+        aria-label="Sort displayed deck cards"
+      >
+        <option value="type">Type</option>
+        <option value="mana">Mana value</option>
+        <option value="price">Price</option>
+      </select>
+    </label>
+  );
+}
+
 function ViewToggle({
   view,
   onChange,
@@ -210,14 +302,14 @@ function ViewToggle({
   onChange: (v: ViewMode) => void;
 }) {
   return (
-    <div className="ml-auto flex items-center rounded-md border border-border bg-white p-0.5">
+    <div className="segmented-control ml-auto flex items-center rounded-lg p-1">
       <button
         onClick={() => onChange("grid")}
         aria-pressed={view === "grid"}
         title="Grid view"
-        className={`flex h-6 w-7 items-center justify-center rounded transition ${
+        className={`flex h-7 w-8 items-center justify-center rounded-md transition ${
           view === "grid"
-            ? "bg-accent text-white"
+            ? "selected-segment font-medium text-text"
             : "text-text-muted hover:text-text"
         }`}
       >
@@ -227,9 +319,9 @@ function ViewToggle({
         onClick={() => onChange("list")}
         aria-pressed={view === "list"}
         title="List view"
-        className={`flex h-6 w-7 items-center justify-center rounded transition ${
+        className={`flex h-7 w-8 items-center justify-center rounded-md transition ${
           view === "list"
-            ? "bg-accent text-white"
+            ? "selected-segment font-medium text-text"
             : "text-text-muted hover:text-text"
         }`}
       >
@@ -266,9 +358,9 @@ function DeckTile({
     >
       <div
         onClick={onSelect}
-        className={`relative cursor-pointer overflow-hidden rounded-[9px] transition ${
+        className={`interactive-card relative cursor-pointer overflow-hidden rounded-lg bg-surface-subtle shadow-sm transition ${
           highlighted
-            ? "ring-2 ring-accent shadow-[0_0_0_3px_rgba(79,70,229,0.35)]"
+            ? "ring-2 ring-accent shadow-[0_0_0_3px_rgba(139,63,244,0.2)]"
             : "ring-1 ring-black/10 group-hover:ring-accent"
         }`}
       >
@@ -294,7 +386,7 @@ function DeckTile({
           }}
           aria-label={`Remove all ${entry.name}`}
           title="Remove all copies"
-          className="absolute left-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)]"
+          className="absolute left-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted opacity-0 shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100"
         >
           <TrashIcon />
         </button>
@@ -305,13 +397,13 @@ function DeckTile({
         </div>
 
         {/* +/− controls */}
-        <div className="absolute inset-x-1.5 bottom-1.5 flex items-center justify-between gap-1">
+        <div className="absolute inset-x-1.5 bottom-1.5 flex items-center justify-between gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
           <button
             onClick={(e) => {
               e.stopPropagation();
               onSetQty(entry.quantity - 1);
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-base font-semibold text-text shadow ring-1 ring-black/10 transition hover:bg-white"
+            className="deck-action-button"
             aria-label={`Remove one ${entry.name}`}
             title="Remove one"
           >
@@ -322,7 +414,7 @@ function DeckTile({
               e.stopPropagation();
               onSetQty(entry.quantity + 1);
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-base font-semibold text-white shadow ring-1 ring-black/10 transition hover:bg-accent-hover"
+            className="deck-action-button"
             aria-label={`Add another ${entry.name}`}
             title="Add one"
           >
@@ -330,7 +422,10 @@ function DeckTile({
           </button>
         </div>
       </div>
-      <div className="mt-1 truncate px-0.5 text-[11px] text-text-muted" title={entry.name}>
+      <div
+        className="mt-1.5 truncate px-0.5 text-[11px] font-medium text-text-muted"
+        title={entry.name}
+      >
         {entry.name}
       </div>
     </li>
@@ -353,10 +448,10 @@ function DeckRow({
   return (
     <li
       aria-current={highlighted ? "true" : undefined}
-      className={`group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition ${
+      className={`group flex cursor-pointer items-center gap-2 px-3 py-2.5 transition sm:gap-3 sm:px-4 ${
         highlighted
-          ? "bg-accent-subtle ring-2 ring-inset ring-accent/70"
-          : "hover:bg-accent-subtle"
+          ? "bg-[image:var(--rainbow-soft)] ring-2 ring-inset ring-accent/60"
+          : "hover:bg-surface-tint/80"
       }`}
       onClick={onSelect}
       onMouseEnter={(e) =>
@@ -373,14 +468,14 @@ function DeckRow({
           alt=""
           width={72}
           height={100}
-          className="h-[100px] w-[72px] shrink-0 rounded-md ring-1 ring-black/10"
+          className="h-[84px] w-[60px] shrink-0 rounded-lg object-cover shadow-sm ring-1 ring-black/10 sm:h-[100px] sm:w-[72px]"
           loading="lazy"
         />
       ) : (
-        <div className="h-[100px] w-[72px] shrink-0 rounded-md bg-surface-subtle" />
+        <div className="h-[84px] w-[60px] shrink-0 rounded-md bg-surface-subtle sm:h-[100px] sm:w-[72px]" />
       )}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{entry.name}</div>
+        <div className="truncate text-sm font-semibold">{entry.name}</div>
         <div className="truncate text-xs text-text-muted">
           {entry.typeLine ?? ""}
         </div>
@@ -391,13 +486,13 @@ function DeckRow({
       <div className="shrink-0 rounded-full bg-black/80 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
         ×{entry.quantity}
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
         <button
           onClick={(e) => {
             e.stopPropagation();
             onSetQty(entry.quantity - 1);
           }}
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-white text-base font-semibold text-text-muted transition hover:border-accent hover:text-accent"
+          className="deck-action-button"
           aria-label={`Remove one ${entry.name}`}
           title="Remove one"
         >
@@ -408,7 +503,7 @@ function DeckRow({
             e.stopPropagation();
             onSetQty(entry.quantity + 1);
           }}
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-white text-base font-semibold text-text-muted transition hover:border-accent hover:bg-accent hover:text-white"
+          className="deck-action-button"
           aria-label={`Add another ${entry.name}`}
           title="Add one"
         >
@@ -419,7 +514,7 @@ function DeckRow({
             e.stopPropagation();
             onSetQty(0);
           }}
-          className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-white text-text-muted transition hover:border-[color:var(--danger)] hover:text-[color:var(--danger)]"
+          className="deck-action-button deck-action-button-danger"
           aria-label={`Remove all ${entry.name}`}
           title="Remove all copies"
         >
@@ -460,7 +555,7 @@ function PriceSummary({
   return (
     <div className="group relative">
       <span
-        className="cursor-default rounded-md bg-surface-subtle px-2 py-0.5 font-medium tabular-nums text-text"
+        className="cursor-default rounded-full border border-border bg-white/80 px-2.5 py-1 font-medium tabular-nums text-text shadow-sm"
         title={title}
       >
         {label}
@@ -471,9 +566,9 @@ function PriceSummary({
       {topExpensive.length > 0 && (
         <div
           role="tooltip"
-          className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-max min-w-[14rem] rounded-md border border-border bg-white p-2 shadow-lg group-hover:block"
+          className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-max min-w-[14rem] rounded-lg border border-border bg-white p-2 shadow-lg group-hover:block"
         >
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-subtle">
+          <div className="mb-1 text-[10px] font-semibold uppercase text-text-subtle">
             Top {topExpensive.length} priciest
           </div>
           <ul className="space-y-0.5">
@@ -507,16 +602,29 @@ function PriceSummary({
 
 function ColorBar({ pips }: { pips: Record<string, number> }) {
   const order: (keyof typeof pips)[] = ["W", "U", "B", "R", "G", "C"];
+  const colors: Record<string, string> = {
+    W: "var(--mana-w)",
+    U: "var(--mana-u)",
+    B: "var(--mana-b)",
+    R: "var(--mana-r)",
+    G: "var(--mana-g)",
+    C: "#d7ddd9",
+  };
   const total = order.reduce((n, k) => n + pips[k], 0);
   if (total === 0) return null;
   return (
-    <div className="flex h-2 w-28 overflow-hidden rounded-full ring-1 ring-black/5">
+    <div
+      className="flex h-2.5 w-32 overflow-hidden rounded-full bg-white/70 shadow-sm ring-1 ring-black/5"
+      title="Color mix"
+    >
       {order.map((k) =>
         pips[k] > 0 ? (
           <div
             key={k}
-            className={`pip-${k}`}
-            style={{ width: `${(pips[k] / total) * 100}%` }}
+            style={{
+              width: `${(pips[k] / total) * 100}%`,
+              background: colors[k],
+            }}
             title={`${k}: ${pips[k]}`}
           />
         ) : null
@@ -529,13 +637,13 @@ function ManaCurve({ curve }: { curve: number[] }) {
   const max = Math.max(1, ...curve);
   return (
     <div
-      className="flex items-end gap-0.5"
+      className="flex items-end gap-0.5 rounded-full border border-border bg-white/78 px-2 py-1 shadow-sm"
       title="Mana curve (non-lands)"
     >
       {curve.map((n, i) => (
         <div
           key={i}
-          className="w-2.5 rounded-sm bg-accent/70"
+          className="accent-bar w-2.5 rounded-sm"
           style={{ height: `${(n / max) * 22 + 2}px` }}
           title={`${i === 7 ? "7+" : i} CMC: ${n}`}
         />
