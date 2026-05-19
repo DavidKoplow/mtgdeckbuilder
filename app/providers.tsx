@@ -3,7 +3,11 @@
 import { type ReactNode, useCallback, useState } from "react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
-import { handleAuthRedirect } from "./lib/auth";
+import {
+  getWorkosRedirectUri,
+  handleAuthRedirect,
+  restoreWorkosCodeVerifierBackup,
+} from "./lib/auth";
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const workosClientId = process.env.NEXT_PUBLIC_WORKOS_CLIENT_ID;
@@ -13,14 +17,30 @@ const workosDevMode =
   process.env.NEXT_PUBLIC_WORKOS_DEV_MODE === "true" ? true : undefined;
 
 export function Providers({ children }: { children: ReactNode }) {
+  const [authStorageReady] = useState(() => {
+    restoreWorkosCodeVerifierBackup();
+    return true;
+  });
+
   const [convex] = useState(
     () => (convexUrl ? new ConvexReactClient(convexUrl) : null),
   );
+  const resolvedWorkosRedirectUri = getWorkosRedirectUri(workosRedirectUri);
   const missingConfig = [
     !convexUrl ? "NEXT_PUBLIC_CONVEX_URL" : null,
     !workosClientId ? "NEXT_PUBLIC_WORKOS_CLIENT_ID" : null,
-    !workosRedirectUri ? "NEXT_PUBLIC_WORKOS_REDIRECT_URI" : null,
   ].filter((value): value is string => value !== null);
+
+  if (!authStorageReady) {
+    return (
+      <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-8 text-sm text-text-subtle">
+        <div className="empty-pill flex items-center gap-3 rounded-full px-4 py-2">
+          <span className="accent-dot h-2.5 w-2.5 animate-pulse rounded-full" />
+          Loading deck workspace
+        </div>
+      </div>
+    );
+  }
 
   if (!convex || missingConfig.length > 0) {
     return (
@@ -35,7 +55,7 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <AuthKitProvider
       clientId={workosClientId!}
-      redirectUri={workosRedirectUri!}
+      redirectUri={resolvedWorkosRedirectUri}
       apiHostname={workosApiHostname || undefined}
       devMode={workosDevMode}
       onRedirectCallback={handleAuthRedirect}

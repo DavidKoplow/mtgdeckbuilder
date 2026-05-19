@@ -1,6 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { useDecks } from "./lib/decks";
 import {
@@ -16,6 +21,13 @@ import { ImportButton } from "./components/ImportButton";
 import { AuthButton } from "./components/AuthButton";
 import { AppIcon } from "./components/AppIcon";
 import { SettingsButton } from "./components/SettingsButton";
+import { MobileAppHeader } from "./components/layout/MobileAppHeader";
+import {
+  MobileWorkspaceTabs,
+  type MobileWorkspacePane,
+} from "./components/layout/MobileWorkspaceTabs";
+import { ResponsivePane } from "./components/layout/ResponsivePane";
+import { useFinePointer } from "./hooks/useMediaQuery";
 import type { ScryfallCard } from "./lib/types";
 import { oracleIdForCard } from "./lib/cardIdentity";
 import { getCardById } from "./lib/scryfall";
@@ -42,6 +54,9 @@ export default function Home() {
   const [semanticRules, setSemanticRules] = useState(false);
   const [similaritySeeds, setSimilaritySeeds] = useState<ScryfallCard[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
+  const [mobilePane, setMobilePane] = useState<MobileWorkspacePane>("search");
+  const finePointer = useFinePointer();
   const [leftPct, setLeftPct] = useState(50);
   const containerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -88,7 +103,9 @@ export default function Home() {
       const card = offline.offlineActive
         ? await getOfflineCardById(cardId)
         : await getCardById(cardId);
-      if (card) setSelected(card);
+      if (card) {
+        setSelected(card);
+      }
     } catch {
       // ignore — deck tile remains clickable but we silently fail the fetch
     }
@@ -121,6 +138,18 @@ export default function Home() {
   }, []);
 
   const { undo, redo, canUndo, canRedo } = decks;
+  const closeMobileHeader = useCallback(() => {
+    setMobileHeaderOpen(false);
+  }, []);
+
+  const openDeckSelector = useCallback(() => {
+    setSelectorOpen(true);
+    closeMobileHeader();
+  }, [closeMobileHeader]);
+
+  const toggleMobileHeader = useCallback(() => {
+    setMobileHeaderOpen((open) => !open);
+  }, []);
 
   const handleUndo = useCallback(() => {
     if (canUndo) undo();
@@ -232,93 +261,190 @@ export default function Home() {
 
   return (
     <div className="app-shell-bg flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="app-header shrink-0 px-3 py-3 sm:px-4">
+      <header
+        className="app-header shrink-0 px-3 py-2 sm:px-4 sm:py-3 lg:max-h-none lg:overflow-visible lg:py-3"
+      >
         <div className="flex w-full min-w-0 flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-center">
-            <button
-              onClick={() => setSelectorOpen(true)}
-              className="header-brand-button shrink-0"
-              aria-label="Open deck list"
-              title="Your decks"
-            >
-              <AppIcon size={34} className="shadow-sm ring-1 ring-border/70" />
-              <div className="leading-tight">
-                <div className="text-sm font-semibold tracking-normal text-text">
-                  magicaldeckgatherer
-                </div>
-                <div className="text-[11px] font-medium text-text-subtle">
-                  MTG deck workspace
-                </div>
+          <MobileAppHeader
+            menuOpen={mobileHeaderOpen}
+            onToggleMenu={toggleMobileHeader}
+            onOpenDeckSelector={openDeckSelector}
+            centerContent={
+              <div className="mobile-workspace-menu-tabs lg:hidden">
+                <MobileWorkspaceTabs
+                  active={mobilePane}
+                  deckCount={activeCardCount}
+                  onChange={setMobilePane}
+                  placement="menu"
+                  className="flex justify-center"
+                />
               </div>
-            </button>
-
-            <div className="hidden h-8 w-px bg-border md:block" />
-
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {active ? (
-                <>
-                  <DeckNameEditor
-                    key={active.id}
-                    name={active.name}
-                    onRename={(n) => decks.renameDeck(active.id, n)}
+            }
+            menuContent={
+              <div className="mobile-header-deck-summary flex min-w-0 flex-col gap-2">
+                {active ? (
+                  <>
+                    <DeckNameEditor
+                      key={active.id}
+                      name={active.name}
+                      onRename={(n) => decks.renameDeck(active.id, n)}
+                    />
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="header-meta-pill flex-1 justify-center">
+                        <span className="tabular-nums">{activeCardCount}</span>
+                        <span>cards</span>
+                      </span>
+                      <span className="header-meta-pill flex-1 justify-center">
+                        <span className="tabular-nums">
+                          {activeSideboardCount}
+                        </span>
+                        <span>sideboard</span>
+                      </span>
+                      <ClearDeckButton
+                        disabled={
+                          active.entries.length === 0 &&
+                          active.sideboard.length === 0
+                        }
+                        onClear={() => decks.clearDeck(active.id)}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <span className="text-sm text-text-subtle">No active deck</span>
+                )}
+              </div>
+            }
+            actions={
+              <>
+                {active && (
+                  <ImportButton
+                    onImport={(entries, sideboard, mode) =>
+                      decks.importEntries(active.id, entries, sideboard, mode)
+                    }
+                    onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
+                    resolveLines={
+                      offline.offlineActive ? resolveLinesOffline : undefined
+                    }
                   />
-                  <span className="header-meta-pill">
-                    <span className="tabular-nums">{activeCardCount}</span>
-                    <span>cards</span>
-                  </span>
-                  <span className="header-meta-pill">
-                    <span className="tabular-nums">{activeSideboardCount}</span>
-                    <span>sideboard</span>
-                  </span>
-                  <ClearDeckButton
+                )}
+                {active && (
+                  <ExportButton
+                    deck={active}
                     disabled={
                       active.entries.length === 0 &&
                       active.sideboard.length === 0
                     }
-                    onClear={() => decks.clearDeck(active.id)}
                   />
-                </>
-              ) : (
-                <span className="ml-1 text-sm text-text-subtle">
-                  No active deck
-                </span>
-              )}
-            </div>
-          </div>
+                )}
+                {active && active.entries.length > 0 && (
+                  <Link
+                    href={`/play/?deck=${encodeURIComponent(active.id)}`}
+                    className="control-primary"
+                    title="Playtest this deck"
+                  >
+                    Playtest
+                  </Link>
+                )}
+                {active && (
+                  <span className="mx-1 hidden h-6 w-px bg-border lg:block" />
+                )}
+                <SettingsButton offline={offline} />
+                <AuthButton />
+              </>
+            }
+          />
 
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 md:justify-end">
-            {active && (
-              <ImportButton
-                onImport={(entries, sideboard, mode) =>
-                  decks.importEntries(active.id, entries, sideboard, mode)
-                }
-                onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
-                resolveLines={offline.offlineActive ? resolveLinesOffline : undefined}
-              />
-            )}
-            {active && (
-              <ExportButton
-                deck={active}
-                disabled={
-                  active.entries.length === 0 &&
-                  active.sideboard.length === 0
-                }
-              />
-            )}
-            {active && active.entries.length > 0 && (
-              <Link
-                href={`/play/?deck=${encodeURIComponent(active.id)}`}
-                className="control-primary"
-                title="Playtest this deck"
+          <div className="hidden w-full min-w-0 flex-col gap-2 lg:flex xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-center">
+              <button
+                onClick={openDeckSelector}
+                className="header-brand-button shrink-0"
+                aria-label="Open deck list"
+                title="Your decks"
               >
-                Playtest
-              </Link>
-            )}
-            {active && (
-              <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
-            )}
-            <SettingsButton offline={offline} />
-            <AuthButton />
+                <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm ring-1 ring-border/70">
+                  <AppIcon size={26} />
+                </span>
+                <div className="leading-tight">
+                  <div className="text-sm font-semibold tracking-normal text-text">
+                    magicaldeckgatherer
+                  </div>
+                  <div className="text-[11px] font-medium text-text-subtle">
+                    MTG deck workspace
+                  </div>
+                </div>
+              </button>
+
+              <div className="hidden h-8 w-px bg-border md:block" />
+
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                {active ? (
+                  <>
+                    <DeckNameEditor
+                      key={active.id}
+                      name={active.name}
+                      onRename={(n) => decks.renameDeck(active.id, n)}
+                    />
+                    <span className="header-meta-pill">
+                      <span className="tabular-nums">{activeCardCount}</span>
+                      <span>cards</span>
+                    </span>
+                    <span className="header-meta-pill">
+                      <span className="tabular-nums">{activeSideboardCount}</span>
+                      <span>sideboard</span>
+                    </span>
+                    <ClearDeckButton
+                      disabled={
+                        active.entries.length === 0 &&
+                        active.sideboard.length === 0
+                      }
+                      onClear={() => decks.clearDeck(active.id)}
+                    />
+                  </>
+                ) : (
+                  <span className="ml-1 text-sm text-text-subtle">
+                    No active deck
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 md:justify-end">
+              {active && (
+                <ImportButton
+                  onImport={(entries, sideboard, mode) =>
+                    decks.importEntries(active.id, entries, sideboard, mode)
+                  }
+                  onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
+                  resolveLines={
+                    offline.offlineActive ? resolveLinesOffline : undefined
+                  }
+                />
+              )}
+              {active && (
+                <ExportButton
+                  deck={active}
+                  disabled={
+                    active.entries.length === 0 &&
+                    active.sideboard.length === 0
+                  }
+                />
+              )}
+              {active && active.entries.length > 0 && (
+                <Link
+                  href={`/play/?deck=${encodeURIComponent(active.id)}`}
+                  className="control-primary"
+                  title="Playtest this deck"
+                >
+                  Playtest
+                </Link>
+              )}
+              {active && (
+                <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
+              )}
+              <SettingsButton offline={offline} />
+              <AuthButton />
+            </div>
           </div>
         </div>
       </header>
@@ -351,10 +477,86 @@ export default function Home() {
 
       <main
         ref={containerRef}
-        className="flex min-h-0 flex-1 flex-col gap-3 p-2 sm:p-3 lg:flex-row lg:gap-4 lg:p-4"
+        className="mobile-workspace-main flex min-h-0 flex-1 flex-col gap-2 px-2 py-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:gap-2 sm:px-3 sm:py-3 lg:flex-row lg:gap-4 lg:p-4 lg:pb-4"
       >
         <section
-          className="workspace-panel rainbow-edge animate-panel flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg lg:flex-none"
+          className="mobile-landscape-preview-pane workspace-panel rainbow-edge animate-panel min-h-0 min-w-0 flex-col overflow-hidden rounded-xl lg:hidden"
+        >
+          {selected ? (
+            <CardDetail
+              card={selected}
+              onBack={() => setSelected(null)}
+              deckQuantity={selectedDeckQuantity}
+              onDeckQuantityChange={handlePreviewDeckQuantityChange}
+              isCommander={selectedIsCommander}
+              onCommanderChange={handleCommanderChange}
+              onToggleSimilaritySeed={handleToggleSimilaritySeed}
+              isSimilaritySeed={selectedIsSimilaritySeed}
+              similaritySeedDisabled={similaritySeedDisabled}
+              offlineActive={offline.offlineActive}
+            />
+          ) : (
+            <PreviewPlaceholder />
+          )}
+        </section>
+        <section
+          className="mobile-landscape-right-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl lg:hidden"
+        >
+          <ResponsivePane
+            mobileActive={mobilePane === "search"}
+            className="mobile-landscape-pane-content workspace-panel rainbow-edge animate-panel min-h-0 flex-1 flex-col overflow-hidden rounded-xl"
+          >
+            <div className="min-h-0 flex-1">
+              <SearchPanel
+                previewCardId={selected?.id ?? null}
+                semanticRules={semanticRules}
+                onSemanticRulesChange={setSemanticRules}
+                offlineActive={offline.offlineActive}
+                offlineReady={offline.cacheReady}
+                similaritySeeds={similaritySeeds}
+                onRemoveSimilaritySeed={handleRemoveSimilaritySeed}
+                onSelect={(card) => {
+                  setSelected(card);
+                }}
+                onAdd={(card) => active && decks.addCard(active.id, card)}
+                onHover={(h) => setHover(h)}
+              />
+            </div>
+          </ResponsivePane>
+
+          <ResponsivePane
+            mobileActive={mobilePane === "deck"}
+            className="mobile-landscape-pane-content workspace-panel rainbow-edge animate-panel min-h-0 flex-1 flex-col overflow-hidden rounded-xl"
+          >
+            {active ? (
+              <DeckPanel
+                deck={active}
+                previewCardId={selected?.id ?? null}
+                onSetQty={(cardId, qty) =>
+                  decks.setQuantity(active.id, cardId, qty)
+                }
+                onSetSideboardQty={(cardId, qty) =>
+                  decks.setQuantity(active.id, cardId, qty, "sideboard")
+                }
+                onMoveCard={(cardId, to) =>
+                  decks.moveCard(active.id, cardId, to)
+                }
+                onSetCommander={(cardId, isCommander) =>
+                  decks.setCommander(active.id, isCommander ? cardId : null)
+                }
+                onHover={(h) => setHover(h)}
+                onSelect={handleDeckCardClick}
+                onRefreshCardData={handleRefreshCardData}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center bg-surface p-8 text-sm text-text-subtle">
+                <div className="empty-pill rounded-full px-4 py-2">No active deck</div>
+              </div>
+            )}
+          </ResponsivePane>
+        </section>
+        <section
+          className="hidden workspace-panel rainbow-edge animate-panel min-h-0 flex-1 flex-col overflow-hidden rounded-lg lg:flex lg:flex-none"
           style={{ flexBasis: `${leftPct}%` }}
         >
           <SearchPanel
@@ -365,7 +567,9 @@ export default function Home() {
             offlineReady={offline.cacheReady}
             similaritySeeds={similaritySeeds}
             onRemoveSimilaritySeed={handleRemoveSimilaritySeed}
-            onSelect={(card) => setSelected(card)}
+            onSelect={(card) => {
+              setSelected(card);
+            }}
             onAdd={(card) => active && decks.addCard(active.id, card)}
             onHover={(h) => setHover(h)}
           />
@@ -383,7 +587,9 @@ export default function Home() {
         >
           <div className="m-auto h-14 w-[3px] rounded-full bg-border-strong transition-colors group-hover:bg-[image:var(--rainbow)]" />
         </div>
-        <section className="workspace-panel rainbow-edge animate-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg">
+        <section
+          className="hidden workspace-panel rainbow-edge animate-panel min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg lg:flex"
+        >
           <div
             className="flex shrink-0 flex-col overflow-hidden border-b border-border"
             style={selected ? undefined : { height: "var(--workspace-top-height)" }}
@@ -440,7 +646,7 @@ export default function Home() {
         backSrc={hover?.backSrc}
         x={hover?.x ?? 0}
         y={hover?.y ?? 0}
-        visible={!!hover?.src}
+        visible={finePointer && !!hover?.src}
       />
     </div>
   );

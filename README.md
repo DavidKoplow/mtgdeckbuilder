@@ -66,8 +66,8 @@ NEXT_PUBLIC_CONVEX_URL=https://hidden-hedgehog-85.convex.cloud
 NEXT_PUBLIC_BASE_PATH=
 
 # Production builds
-CONVEX_DEPLOYMENT=prod:superb-goshawk-593
-NEXT_PUBLIC_CONVEX_URL=https://superb-goshawk-593.convex.cloud
+CONVEX_DEPLOYMENT=dev:hidden-hedgehog-85
+NEXT_PUBLIC_CONVEX_URL=https://hidden-hedgehog-85.convex.cloud
 NEXT_PUBLIC_BASE_PATH=
 ```
 

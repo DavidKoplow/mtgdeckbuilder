@@ -35,6 +35,7 @@ self.addEventListener("fetch", (event) => {
   const isStatic =
     url.origin === self.location.origin &&
     (url.pathname.startsWith("/offline-data/") ||
+      url.pathname === "/deck-builder-icon.svg" ||
       url.pathname === "/icon.svg" ||
       url.pathname === "/apple-icon.png");
 

@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { getAppHomePath, getReturnToFromLocation } from "../lib/auth";
+import {
+  clearWorkosCodeVerifierBackup,
+  getAppHomePath,
+  getAppLoginPath,
+  getReturnToFromLocation,
+  startWorkosAuthRedirect,
+} from "../lib/auth";
 import { AppIcon } from "./AppIcon";
 
 type AuthRedirectProps = {
@@ -10,22 +16,41 @@ type AuthRedirectProps = {
 };
 
 export function AuthRedirect({ mode }: AuthRedirectProps) {
-  const { isLoading, signIn, signUp, user } = useAuth();
+  const { getSignInUrl, getSignUpUrl, isLoading, user } = useAuth();
   const [failed, setFailed] = useState(false);
+  const [hasCallbackCode] = useState(() => {
+    if (mode !== "callback" || typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).has("code");
+  });
 
   useEffect(() => {
-    if (mode === "callback") return;
+    if (mode === "callback" || isLoading || user) return;
 
-    const startAuth = mode === "sign-up" ? signUp : signIn;
-    startAuth({ state: { returnTo: getReturnToFromLocation() } }).catch(() => {
-      setFailed(true);
-    });
-  }, [mode, signIn, signUp]);
+    const getAuthUrl = mode === "sign-up" ? getSignUpUrl : getSignInUrl;
+    startWorkosAuthRedirect(getAuthUrl, getReturnToFromLocation()).catch(
+      () => {
+        setFailed(true);
+      }
+    );
+  }, [getSignInUrl, getSignUpUrl, isLoading, mode, user]);
 
   useEffect(() => {
     if (mode !== "callback" || isLoading || !user) return;
     window.location.replace(getAppHomePath());
   }, [isLoading, mode, user]);
+
+  useEffect(() => {
+    if (mode !== "callback" || isLoading || user) return;
+
+    const timeoutId = window.setTimeout(
+      () => {
+        clearWorkosCodeVerifierBackup();
+        setFailed(true);
+      },
+      hasCallbackCode ? 1500 : 0
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [hasCallbackCode, isLoading, mode, user]);
 
   return (
     <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-6">
@@ -37,10 +62,28 @@ export function AuthRedirect({ mode }: AuthRedirectProps) {
           </h1>
           <p className="mt-2 text-sm leading-6 text-text-muted">
             {failed
-              ? "Return to the builder and try signing in again."
+              ? "This session could not be completed. Start a fresh sign-in from this site."
               : "Finishing your WorkOS session."}
           </p>
         </div>
+        {failed ? (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              className="control-primary px-3 py-2 text-xs font-semibold"
+              onClick={() => window.location.assign(getAppLoginPath())}
+            >
+              Try again
+            </button>
+            <button
+              type="button"
+              className="control px-3 py-2 text-xs"
+              onClick={() => window.location.assign(getAppHomePath())}
+            >
+              Back to builder
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

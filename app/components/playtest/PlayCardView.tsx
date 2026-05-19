@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useFinePointer } from "../../hooks/useMediaQuery";
 import type { PlayCard, Zone } from "../../lib/playtest";
 
 type Props = {
@@ -37,6 +38,7 @@ export function PlayCardView({
   const [menuOpen, setMenuOpen] = useState(false);
   const [counterMenuOpen, setCounterMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const finePointer = useFinePointer();
 
   useEffect(() => {
     if (!menuOpen && !counterMenuOpen) return;
@@ -98,8 +100,12 @@ export function PlayCardView({
       onMouseLeave={() => onHover?.(undefined, 0, 0)}
     >
       <div
-        className="absolute left-0 top-0 cursor-grab select-none active:cursor-grabbing"
-        draggable={!selectable}
+        className={`absolute left-0 top-0 select-none ${
+          finePointer
+            ? "cursor-grab active:cursor-grabbing"
+            : "cursor-pointer touch-manipulation"
+        }`}
+        draggable={!selectable && finePointer}
         onDragStart={onDragStart}
         style={{
           width,
@@ -172,7 +178,11 @@ export function PlayCardView({
               setMenuOpen((v) => !v);
               setCounterMenuOpen(false);
             }}
-            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/90"
+            className={`flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white transition hover:bg-black/90 ${
+              finePointer
+                ? "opacity-0 group-hover:opacity-100"
+                : "opacity-100"
+            }`}
             style={{ opacity: menuOpen || counterMenuOpen ? 1 : undefined }}
           >
             ⋯
@@ -256,7 +266,9 @@ export function PlayCardView({
           <button
             aria-label="Card actions"
             onClick={() => setMenuOpen((v) => !v)}
-            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white hover:bg-black/90"
+            className={`flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-[11px] leading-none text-white hover:bg-black/90 ${
+              finePointer ? "" : "opacity-100"
+            }`}
           >
             ⋯
           </button>

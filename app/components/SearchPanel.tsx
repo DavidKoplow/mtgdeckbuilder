@@ -48,6 +48,20 @@ const HYBRID_RESULT_LIMIT = 32;
 const HYBRID_POST_FILTER_FETCH_LIMIT = 256;
 const MAX_EXACT_VECTOR_CANDIDATE_IDS = 1024;
 export const MAX_SIMILARITY_SEEDS = 8;
+
+function dedupeCards(cards: ScryfallCard[]): ScryfallCard[] {
+  const byIdentity = new Map<string, ScryfallCard>();
+
+  for (const card of cards) {
+    const key = oracleIdForCard(card) ?? card.id;
+    if (!byIdentity.has(key)) {
+      byIdentity.set(key, card);
+    }
+  }
+
+  return Array.from(byIdentity.values());
+}
+
 type SearchRunMode = "raw" | "hybrid";
 
 type SimilarCardMatch = {
@@ -71,6 +85,7 @@ export function SearchPanel({
     sort: "name",
     colorMode: "identity",
   });
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [results, setResults] = useState<ScryfallCard[]>([]);
   const [resultsKey, setResultsKey] = useState("");
   const [total, setTotal] = useState<number | null>(null);
@@ -155,9 +170,10 @@ export function SearchPanel({
           if (runRef.current !== runId || abortRef.current !== ac || ac.signal.aborted) {
             return;
           }
-          setResults(resp.data);
+          const deduped = dedupeCards(resp.data);
+          setResults(deduped);
           setResultsKey(key);
-          setTotal(resp.total_cards ?? resp.data.length);
+          setTotal(deduped.length);
           return;
         }
 
@@ -209,9 +225,10 @@ export function SearchPanel({
               })
               .slice(0, HYBRID_RESULT_LIMIT);
           }
-          setResults(cards);
+          const deduped = dedupeCards(cards);
+          setResults(deduped);
           setResultsKey(key);
-          setTotal(cards.length);
+          setTotal(deduped.length);
           return;
         }
 
@@ -222,9 +239,10 @@ export function SearchPanel({
         if (runRef.current !== runId || abortRef.current !== ac || ac.signal.aborted) {
           return;
         }
-        setResults(resp.data);
+        const deduped = dedupeCards(resp.data);
+        setResults(deduped);
         setResultsKey(key);
-        setTotal(resp.total_cards ?? resp.data.length);
+        setTotal(deduped.length);
       } catch (e) {
         if (runRef.current !== runId || abortRef.current !== ac || ac.signal.aborted) {
           return;
@@ -280,29 +298,67 @@ export function SearchPanel({
   function clearAll() {
     onSemanticRulesChange(false);
     setFilters({ sort: "name", colorMode: "identity" });
+    setFiltersExpanded(false);
   }
+
+  const activeFilterCount = countActiveFilters(filters, semanticRules);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
-        className="search-filter-panel panel-heading shrink-0 overflow-visible border-b border-border px-3 py-2.5"
-        style={{ height: "var(--workspace-top-height)" }}
+        className={`search-filter-panel panel-heading thin-scroll shrink-0 overflow-visible border-b border-border px-3 py-2.5 ${
+          filtersExpanded ? "search-filter-panel-expanded" : ""
+        }`}
       >
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-sm font-semibold text-text">Find cards</div>
-            <div className="text-[11px] text-text-subtle">
+            <div className="text-base font-semibold text-text lg:text-sm">Find cards</div>
+            <div className="hidden text-[11px] text-text-subtle lg:block">
               {offlineActive ? "Local offline catalog" : "Scryfall catalog"}
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={clearAll} className="control px-2 py-1 text-[11px]">
+            <button
+              type="button"
+              onClick={() => setFiltersExpanded((expanded) => !expanded)}
+              aria-expanded={filtersExpanded}
+              className="control flex min-h-11 items-center gap-1.5 px-3 text-xs font-semibold lg:hidden"
+            >
+              Filters
+              {activeFilterCount > 0 ? (
+                <span className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </button>
+            <button
+              onClick={clearAll}
+              className="control min-h-11 px-3 text-xs font-semibold lg:min-h-0 lg:px-2 lg:py-1 lg:text-[11px] lg:font-normal"
+            >
               Reset
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+        {!filtersExpanded && (
+          <div className="mb-2 lg:hidden">
+            <Field label="Name">
+              <input
+                type="text"
+                value={filters.name ?? ""}
+                onChange={(e) => update("name", e.target.value)}
+                className="input"
+                placeholder="Search by card name"
+              />
+            </Field>
+          </div>
+        )}
+
+        <div
+          className={`grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 xl:grid-cols-4 ${
+            filtersExpanded ? "" : "hidden lg:grid"
+          }`}
+        >
             <Field label="Name">
               <input
                 type="text"
@@ -542,13 +598,13 @@ export function SearchPanel({
               </select>
             </Field>
 
-            <div className="flex items-center justify-between xl:col-span-4">
+            <div className="flex items-center justify-between min-[480px]:col-span-2 xl:col-span-4">
               <code className="min-w-0 truncate rounded-lg border border-border bg-white/70 px-2 py-1 font-mono text-[11px] text-text-muted shadow-sm">
                 {queryPreview || "(empty query)"}
               </code>
             </div>
             {similaritySeeds.length > 0 && (
-              <div className="xl:col-span-4">
+              <div className="min-[480px]:col-span-2 xl:col-span-4">
                 <SimilaritySeedPreview
                   seeds={similaritySeeds}
                   onRemove={onRemoveSimilaritySeed}
@@ -596,9 +652,9 @@ export function SearchPanel({
             );
             return (
               <li
-                key={card.id}
+                key={oracleIdForCard(card) ?? card.id}
                 aria-current={isPreviewed ? "true" : undefined}
-                className={`animate-row group relative grid cursor-pointer grid-cols-[62px_minmax(0,1fr)_2rem] items-start gap-2 px-3 py-3 transition sm:grid-cols-[72px_minmax(12rem,18rem)_minmax(4rem,auto)_2rem] sm:gap-3 sm:px-4 xl:grid-cols-[72px_minmax(13rem,18rem)_minmax(0,1fr)_minmax(5rem,auto)_2rem] ${
+                className={`mobile-search-result animate-row group relative grid cursor-pointer grid-cols-[56px_minmax(0,1fr)_2.75rem] items-center gap-2 px-3 py-2.5 transition sm:grid-cols-[72px_minmax(12rem,18rem)_minmax(4rem,auto)_2rem] sm:gap-3 sm:px-4 sm:py-3 xl:grid-cols-[72px_minmax(13rem,18rem)_minmax(0,1fr)_minmax(5rem,auto)_2rem] ${
                   isPreviewed
                     ? "bg-[image:var(--rainbow-soft)] ring-2 ring-inset ring-accent/60"
                     : "hover:bg-surface-tint/80"
@@ -631,7 +687,7 @@ export function SearchPanel({
                     alt=""
                     width={72}
                     height={100}
-                    className="h-[86px] w-[62px] shrink-0 rounded-lg object-cover shadow-sm ring-1 ring-black/10 transition group-hover:shadow-md sm:h-[100px] sm:w-[72px]"
+                    className="h-[72px] w-[52px] shrink-0 rounded-md object-cover shadow-sm ring-1 ring-black/10 transition group-hover:shadow-md sm:h-[100px] sm:w-[72px] sm:rounded-lg"
                     loading="lazy"
                   />
                 ) : (
@@ -670,7 +726,7 @@ export function SearchPanel({
                     e.stopPropagation();
                     onAdd(card);
                   }}
-                  className="control-primary flex h-8 w-8 shrink-0 items-center justify-center text-base font-semibold"
+                  className="search-add-btn control-primary flex shrink-0 items-center justify-center text-lg font-semibold sm:h-8 sm:w-8 sm:text-base"
                   aria-label={`Add ${card.name} to deck`}
                   title="Add to deck"
                 >
@@ -687,7 +743,7 @@ export function SearchPanel({
 
 function LocalCardThumb({ card }: { card: ScryfallCard }) {
   return (
-    <div className="flex h-[86px] w-[62px] shrink-0 flex-col justify-between rounded-md border border-border bg-surface-subtle p-1.5 text-[9px] leading-tight text-text-muted ring-1 ring-black/5 sm:h-[100px] sm:w-[72px]">
+    <div className="flex h-[72px] w-[52px] shrink-0 flex-col justify-between rounded-md border border-border bg-surface-subtle p-1 text-[8px] leading-tight text-text-muted ring-1 ring-black/5 sm:h-[100px] sm:w-[72px] sm:p-1.5 sm:text-[9px]">
       <div className="min-w-0">
         <div className="line-clamp-3 font-semibold text-text">{card.name}</div>
         <div className="mt-1 line-clamp-2">{card.type_line}</div>
@@ -819,6 +875,27 @@ function Field({
       {children}
     </div>
   );
+}
+
+function countActiveFilters(
+  filters: AdvancedFilters,
+  semanticRules: boolean
+): number {
+  let count = 0;
+  if (filters.name?.trim()) count += 1;
+  if (filters.oracle?.trim()) count += 1;
+  if (filters.excludeOracle?.trim()) count += 1;
+  if (filters.type?.trim()) count += 1;
+  if (filters.set) count += 1;
+  if (filters.colors?.length) count += 1;
+  if (filters.rarity?.length) count += 1;
+  if (filters.cmcMin !== undefined || filters.cmcMax !== undefined) count += 1;
+  if (filters.power?.trim() || filters.toughness?.trim()) count += 1;
+  if (filters.usdMin !== undefined || filters.usdMax !== undefined) count += 1;
+  if (filters.format) count += 1;
+  if (filters.sort && filters.sort !== "name") count += 1;
+  if (semanticRules) count += 1;
+  return count;
 }
 
 function buildSearchRequest(

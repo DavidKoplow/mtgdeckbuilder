@@ -173,6 +173,7 @@ export function DeckPanel({
   const [boardView, setBoardView] = useState<BoardView>("main");
   const [view, setView] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<DeckSortMode>("type");
+  const [statsExpanded, setStatsExpanded] = useState(false);
   const visibleEntries = boardView === "sideboard" ? deck.sideboard : deck.entries;
   const mainCount = deck.entries.reduce((n, entry) => n + entry.quantity, 0);
   const sideboardCount = deck.sideboard.reduce(
@@ -252,16 +253,31 @@ export function DeckPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="panel-heading flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-3 py-3 text-xs text-text-muted sm:px-4">
-        <div className="mr-1">
-          <div className="text-sm font-semibold text-text">
-            {boardView === "sideboard" ? "Sideboard" : "Main Deck"}
+      <div className="panel-heading flex flex-col gap-2 border-b border-border px-2 py-2 text-[11px] text-text-muted sm:px-4 sm:py-3 sm:text-xs lg:flex-row lg:flex-wrap lg:items-center lg:gap-x-4 lg:gap-y-2">
+        <div className="flex min-w-0 items-center justify-between gap-2 lg:mr-1">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-text">
+              {boardView === "sideboard" ? "Sideboard" : "Main Deck"}
+            </div>
+            <div className="truncate text-xs tabular-nums text-text-subtle">
+              {mainCount} main · {sideboardCount} sideboard
+            </div>
           </div>
-          <div className="text-xs tabular-nums text-text-subtle">
-            {mainCount} main · {sideboardCount} sideboard
-          </div>
+          <button
+            type="button"
+            onClick={() => setStatsExpanded((expanded) => !expanded)}
+            aria-expanded={statsExpanded}
+            className="control flex min-h-11 shrink-0 items-center gap-1.5 px-3 text-xs font-semibold lg:hidden"
+          >
+            Stats
+            <ChevronIcon expanded={statsExpanded} />
+          </button>
         </div>
-        <div className="flex min-w-[11rem] flex-1 flex-wrap items-center gap-x-4 gap-y-2">
+        <div
+          className={`min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 lg:flex lg:min-w-[11rem] lg:flex-1 lg:gap-x-4 lg:gap-y-2 ${
+            statsExpanded ? "flex" : "hidden"
+          }`}
+        >
           <ColorBar pips={colorPips} />
           <ManaCurve curve={curve} />
           <PriceSummary
@@ -271,9 +287,11 @@ export function DeckPanel({
             pricedCount={pricedCount}
           />
         </div>
-        <BoardToggle boardView={boardView} onChange={setBoardView} />
-        <SortSelect sortMode={sortMode} onChange={setSortMode} />
-        <ViewToggle view={view} onChange={setView} />
+        <div className="flex flex-wrap items-center gap-1.5 lg:gap-2">
+          <BoardToggle boardView={boardView} onChange={setBoardView} />
+          <SortSelect sortMode={sortMode} onChange={setSortMode} />
+          <ViewToggle view={view} onChange={setView} />
+        </div>
       </div>
 
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-surface">
@@ -298,7 +316,7 @@ export function DeckPanel({
                   </span>
                 </header>
                 {view === "grid" ? (
-                  <ul className="grid grid-cols-[repeat(auto-fill,minmax(7.25rem,1fr))] gap-3 sm:grid-cols-[repeat(auto-fill,minmax(8.25rem,1fr))]">
+                  <ul className="deck-card-grid grid grid-cols-[repeat(auto-fill,minmax(5.35rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(8.25rem,1fr))] sm:gap-3">
                     {entries.map((e) => (
                       <DeckTile
                         key={e.cardId}
@@ -351,12 +369,12 @@ function SortSelect({
   onChange: (mode: DeckSortMode) => void;
 }) {
   return (
-    <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-white/78 px-2.5 text-xs text-text-muted shadow-sm">
+    <label className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-white/78 px-2 text-[11px] text-text-muted shadow-sm lg:h-9 lg:gap-2 lg:px-2.5 lg:text-xs">
       <span className="font-medium">Sort</span>
       <select
         value={sortMode}
         onChange={(e) => onChange(e.target.value as DeckSortMode)}
-        className="bg-transparent text-xs font-medium text-text outline-none"
+        className="bg-transparent text-[11px] font-medium text-text outline-none lg:text-xs"
         aria-label="Sort displayed deck cards"
       >
         <option value="type">Type</option>
@@ -376,11 +394,11 @@ function BoardToggle({
   onChange: (view: BoardView) => void;
 }) {
   return (
-    <div className="segmented-control flex items-center rounded-lg p-1 text-xs">
+    <div className="segmented-control flex items-center rounded-lg p-0.5 text-[11px] lg:p-1 lg:text-xs">
       <button
         onClick={() => onChange("main")}
         aria-pressed={boardView === "main"}
-        className={`h-7 rounded-md px-2.5 transition ${
+        className={`h-7 rounded-md px-2 transition lg:px-2.5 ${
           boardView === "main"
             ? "selected-segment font-medium text-text"
             : "text-text-muted hover:text-text"
@@ -391,7 +409,7 @@ function BoardToggle({
       <button
         onClick={() => onChange("sideboard")}
         aria-pressed={boardView === "sideboard"}
-        className={`h-7 rounded-md px-2.5 transition ${
+        className={`h-7 rounded-md px-2 transition lg:px-2.5 ${
           boardView === "sideboard"
             ? "selected-segment font-medium text-text"
             : "text-text-muted hover:text-text"
@@ -411,12 +429,12 @@ function ViewToggle({
   onChange: (v: ViewMode) => void;
 }) {
   return (
-    <div className="segmented-control ml-auto flex items-center rounded-lg p-1">
+    <div className="segmented-control ml-auto flex items-center rounded-lg p-0.5 lg:p-1">
       <button
         onClick={() => onChange("grid")}
         aria-pressed={view === "grid"}
         title="Grid view"
-        className={`flex h-7 w-8 items-center justify-center rounded-md transition ${
+        className={`flex h-7 w-7 items-center justify-center rounded-md transition lg:w-8 ${
           view === "grid"
             ? "selected-segment font-medium text-text"
             : "text-text-muted hover:text-text"
@@ -428,7 +446,7 @@ function ViewToggle({
         onClick={() => onChange("list")}
         aria-pressed={view === "list"}
         title="List view"
-        className={`flex h-7 w-8 items-center justify-center rounded-md transition ${
+        className={`flex h-7 w-7 items-center justify-center rounded-md transition lg:w-8 ${
           view === "list"
             ? "selected-segment font-medium text-text"
             : "text-text-muted hover:text-text"
@@ -522,7 +540,7 @@ function DeckTile({
           }}
           aria-label={`Remove all ${entry.name}`}
           title="Remove all copies"
-          className={`absolute left-1.5 ${trashTop} flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted opacity-0 shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100`}
+          className={`absolute left-1.5 ${trashTop} hidden h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100`}
         >
           <TrashIcon />
         </button>
@@ -534,7 +552,7 @@ function DeckTile({
           }}
           aria-label={moveLabel}
           title={moveTitle}
-          className={`absolute left-1.5 ${moveTop} flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted opacity-0 shadow ring-1 ring-black/10 transition hover:bg-white hover:text-accent group-hover:opacity-100`}
+          className={`absolute left-1.5 ${moveTop} hidden h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-accent lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100`}
         >
           <MoveIcon direction={isSideboard ? "left" : "right"} />
         </button>
@@ -546,7 +564,7 @@ function DeckTile({
 
         {/* +/− controls */}
         <div
-          className={`absolute inset-x-1.5 bottom-1.5 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 ${
+          className={`absolute inset-x-1.5 bottom-1.5 hidden items-center gap-1 transition lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 ${
             isSideboard ? "justify-center" : "justify-between"
           }`}
         >
@@ -649,11 +667,11 @@ function DeckRow({
           alt=""
           width={72}
           height={100}
-          className="h-[84px] w-[60px] shrink-0 rounded-lg object-cover shadow-sm ring-1 ring-black/10 sm:h-[100px] sm:w-[72px]"
+          className="h-[72px] w-[52px] shrink-0 rounded-md object-cover shadow-sm ring-1 ring-black/10 sm:h-[100px] sm:w-[72px] sm:rounded-lg"
           loading="lazy"
         />
       ) : (
-        <div className="h-[84px] w-[60px] shrink-0 rounded-md bg-surface-subtle sm:h-[100px] sm:w-[72px]" />
+        <div className="h-[72px] w-[52px] shrink-0 rounded-md bg-surface-subtle sm:h-[100px] sm:w-[72px]" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -674,7 +692,7 @@ function DeckRow({
       <div className="shrink-0 rounded-full bg-black/80 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
         ×{entry.quantity}
       </div>
-      <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+      <div className="hidden shrink-0 items-center gap-1 transition lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -868,6 +886,25 @@ function ManaCurve({ curve }: { curve: number[] }) {
         />
       ))}
     </div>
+  );
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width={14}
+      height={14}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+    >
+      <path d="M5 8l5 5 5-5" />
+    </svg>
   );
 }
 

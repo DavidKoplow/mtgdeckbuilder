@@ -21,6 +21,12 @@ import {
 import { CardHover } from "../components/CardHover";
 import { AuthButton } from "../components/AuthButton";
 import { AppIcon } from "../components/AppIcon";
+import {
+  MobilePlaytestTabs,
+  type MobilePlaytestPane,
+} from "../components/playtest/MobilePlaytestTabs";
+import { useFinePointer, useMediaQuery } from "../hooks/useMediaQuery";
+import { WORKSPACE_DESKTOP_QUERY } from "../lib/breakpoints";
 import type { Deck } from "../lib/types";
 
 type Hover = { src?: string; x: number; y: number } | null;
@@ -119,26 +125,70 @@ function Playtest({ deck }: { deck: Deck }) {
   const [hover, setHover] = useState<Hover>(null);
   const [scryPromptOpen, setScryPromptOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
+  const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
+  const [mobilePane, setMobilePane] = useState<MobilePlaytestPane>("battlefield");
+  const isDesktop = useMediaQuery(WORKSPACE_DESKTOP_QUERY);
+  const finePointer = useFinePointer();
+  const handCardWidth = isDesktop ? 200 : 112;
 
   function onHover(src: string | undefined, x: number, y: number) {
     setHover(src ? { src, x, y } : null);
   }
 
+  function mobilePaneVisible(...panes: MobilePlaytestPane[]) {
+    return isDesktop || panes.includes(mobilePane);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
-      <header className="soft-divider flex shrink-0 flex-wrap items-center justify-between gap-3 bg-surface-raised px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
+      <header
+        className={`soft-divider shrink-0 bg-surface-raised px-3 py-2 sm:px-4 sm:py-3 lg:max-h-none lg:overflow-visible ${
+          mobileHeaderOpen
+            ? "max-h-[min(50dvh,22rem)] overflow-y-auto overscroll-contain"
+            : ""
+        }`}
+        style={{
+          paddingTop: "max(0.5rem, env(safe-area-inset-top))",
+        }}
+      >
+        <div className="flex min-w-0 items-center justify-between gap-2 lg:hidden">
           <Link
             href="/"
-            className="control flex items-center gap-2 px-3 py-2 text-sm"
+            className="control flex min-h-11 shrink-0 items-center gap-2 px-3 py-2 text-sm"
           >
             <AppIcon size={20} className="rounded-md" />
             Builder
           </Link>
-          <div className="min-w-0 truncate text-sm font-semibold">
+          <div className="min-w-0 flex-1 truncate text-center text-sm font-semibold">
             {deck.name}
           </div>
-          <label className="flex h-8 items-center gap-2 rounded-lg border border-border bg-white px-2 text-xs text-text-muted">
+          <button
+            type="button"
+            onClick={() => setMobileHeaderOpen((open) => !open)}
+            aria-expanded={mobileHeaderOpen}
+            className="control flex h-11 min-w-11 shrink-0 items-center justify-center px-3 text-xs font-semibold"
+          >
+            Menu
+          </button>
+        </div>
+
+        <div
+          className={`mt-0 flex flex-col gap-3 lg:mt-0 lg:flex-row lg:items-center lg:justify-between ${
+            mobileHeaderOpen ? "mt-2 flex" : "hidden lg:flex"
+          }`}
+        >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Link
+            href="/"
+            className="control hidden items-center gap-2 px-3 py-2 text-sm lg:flex"
+          >
+            <AppIcon size={20} className="rounded-md" />
+            Builder
+          </Link>
+          <div className="hidden min-w-0 truncate text-sm font-semibold lg:block">
+            {deck.name}
+          </div>
+          <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border bg-white px-2 text-xs text-text-muted">
             <span>Mode</span>
             <select
               value={state.mode}
@@ -151,32 +201,32 @@ function Playtest({ deck }: { deck: Deck }) {
             </select>
           </label>
           {commanderEntry && (
-            <span className="max-w-48 truncate rounded-full border border-accent/30 bg-accent-subtle px-2.5 py-1 text-[11px] font-medium text-accent">
+            <span className="max-w-full truncate rounded-full border border-accent/30 bg-accent-subtle px-2.5 py-1 text-[11px] font-medium text-accent lg:max-w-48">
               Commander: {commanderEntry.name}
             </span>
           )}
         </div>
 
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-sm">
+        <div className="mobile-header-actions grid min-w-0 gap-2 text-sm lg:flex lg:flex-wrap lg:items-center lg:justify-end">
           <LifeCounter life={state.life} onDelta={pt.lifeDelta} onSet={pt.setLife} />
           <PoisonCounter
             poison={state.poison}
             onDelta={pt.poisonDelta}
             onSet={pt.setPoison}
           />
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
+          <div className="flex min-h-11 items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
             <span className="text-text-muted">Turn</span>
             <span className="font-semibold tabular-nums">{state.turn}</span>
             <button
               onClick={pt.endTurn}
-              className="control ml-2 px-2 py-1 text-[11px]"
+              className="control ml-2 min-h-9 px-2 py-1 text-[11px]"
               title="End turn (untaps all)"
             >
               End turn
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="col-span-full flex flex-wrap items-center gap-1 lg:col-auto">
             <ToolButton onClick={() => pt.draw(1)}>Draw</ToolButton>
             <ToolButton onClick={pt.shuffleLib}>Shuffle</ToolButton>
             <ToolButton onClick={pt.untapAll}>Untap all</ToolButton>
@@ -191,14 +241,19 @@ function Playtest({ deck }: { deck: Deck }) {
             </ToolButton>
           </div>
         </div>
+        </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 bg-bg p-3">
+      <main className="mobile-playtest-main flex min-h-0 flex-1 flex-col gap-2 bg-bg p-2 pb-[calc(4.25rem+env(safe-area-inset-bottom))] sm:gap-3 sm:p-3 lg:gap-3 lg:pb-3 lg:p-3">
         {/* Battlefield */}
         <DropZone
           to="battlefield"
           onDrop={(from, id) => pt.move(id, from, "battlefield")}
-          className="workspace-panel relative flex flex-1 flex-col overflow-auto rounded-xl p-4"
+          className={`workspace-panel relative min-h-0 flex-col overflow-auto rounded-xl p-3 sm:p-4 ${
+            mobilePaneVisible("battlefield")
+              ? "flex flex-1"
+              : "hidden lg:flex lg:flex-1"
+          }`}
         >
           <ZoneHeader label="Battlefield" count={state.battlefield.length} />
           {(() => {
@@ -264,10 +319,103 @@ function Playtest({ deck }: { deck: Deck }) {
           })()}
         </DropZone>
 
-        {/* Hand + zones */}
-        <section className="workspace-panel flex flex-none flex-col gap-2 rounded-xl bg-surface p-3">
+        {/* Mobile hand */}
+        <section
+          className={`workspace-panel min-h-0 flex-col gap-2 rounded-xl bg-surface p-3 lg:hidden ${
+            mobilePaneVisible("hand") ? "flex flex-1" : "hidden"
+          }`}
+        >
+          <ZoneHeader label="Hand" count={state.hand.length} />
+          <DropZone
+            to="hand"
+            onDrop={(from, id) => pt.move(id, from, "hand")}
+            className="thin-scroll mt-2 flex min-h-0 flex-1 gap-2 overflow-x-auto overscroll-x-contain rounded-xl bg-surface-raised p-2 touch-pan-x"
+          >
+            {state.hand.map((c) => (
+              <PlayCardView
+                key={c.instanceId}
+                card={c}
+                zone="hand"
+                width={handCardWidth}
+                onMove={(to) => pt.move(c.instanceId, "hand", to)}
+                onHover={onHover}
+              />
+            ))}
+            {state.hand.length === 0 && (
+              <div className="px-2 py-2 text-xs text-text-subtle">
+                Hand is empty.
+              </div>
+            )}
+          </DropZone>
+        </section>
+
+        {/* Mobile zones */}
+        <section
+          className={`workspace-panel min-h-0 flex-col gap-2 rounded-xl bg-surface p-3 lg:hidden ${
+            mobilePaneVisible("zones") ? "flex flex-1" : "hidden"
+          }`}
+        >
+          <div className="grid min-h-0 flex-1 grid-cols-2 gap-3">
+            {state.mode === "commander" && (
+              <StackZone
+                label="Command"
+                cards={state.command}
+                compact
+                onHover={onHover}
+                onDropFrom={(from, id) => pt.move(id, from, "command")}
+                onMoveTop={(to) => {
+                  const top = state.command[state.command.length - 1];
+                  if (top) pt.move(top.instanceId, "command", to);
+                }}
+              />
+            )}
+            <StackZone
+              label="Library"
+              cards={state.library}
+              facedown
+              compact
+              onHover={onHover}
+              onDropFrom={(from, id) =>
+                pt.move(id, from, "library", "top")
+              }
+              extra={
+                <button
+                  onClick={() => pt.draw(1)}
+                  className="control mt-1 w-full px-2 py-1.5 text-xs"
+                >
+                  Draw 1
+                </button>
+              }
+            />
+            <StackZone
+              label="Graveyard"
+              cards={state.graveyard}
+              compact
+              onHover={onHover}
+              onDropFrom={(from, id) => pt.move(id, from, "graveyard")}
+              onMoveTop={(to) => {
+                const top = state.graveyard[state.graveyard.length - 1];
+                if (top) pt.move(top.instanceId, "graveyard", to);
+              }}
+            />
+            <StackZone
+              label="Exile"
+              cards={state.exile}
+              compact
+              onHover={onHover}
+              onDropFrom={(from, id) => pt.move(id, from, "exile")}
+              onMoveTop={(to) => {
+                const top = state.exile[state.exile.length - 1];
+                if (top) pt.move(top.instanceId, "exile", to);
+              }}
+            />
+          </div>
+        </section>
+
+        {/* Desktop hand + zones */}
+        <section className="workspace-panel hidden flex-none flex-col gap-2 rounded-xl bg-surface p-3 lg:flex">
           <div className="flex items-start gap-4">
-            <div className="flex flex-1 flex-col">
+            <div className="flex min-w-0 flex-1 flex-col">
               <ZoneHeader label="Hand" count={state.hand.length} />
               <DropZone
                 to="hand"
@@ -279,7 +427,7 @@ function Playtest({ deck }: { deck: Deck }) {
                     key={c.instanceId}
                     card={c}
                     zone="hand"
-                    width={200}
+                    width={handCardWidth}
                     onMove={(to) => pt.move(c.instanceId, "hand", to)}
                     onHover={onHover}
                   />
@@ -345,6 +493,13 @@ function Playtest({ deck }: { deck: Deck }) {
         </section>
       </main>
 
+      <MobilePlaytestTabs
+        active={mobilePane}
+        handCount={state.hand.length}
+        battlefieldCount={state.battlefield.length}
+        onChange={setMobilePane}
+      />
+
       {/* Modals */}
       {state.phase === "mulligan-deciding" && (
         <MulliganPrompt
@@ -400,7 +555,7 @@ function Playtest({ deck }: { deck: Deck }) {
         src={hover?.src}
         x={hover?.x ?? 0}
         y={hover?.y ?? 0}
-        visible={!!hover?.src}
+        visible={finePointer && !!hover?.src}
       />
     </div>
   );
@@ -418,7 +573,7 @@ function ToolButton({
   return (
     <button
       onClick={onClick}
-      className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
+      className={`min-h-11 rounded-lg border px-2.5 py-1.5 text-xs transition ${
         danger
           ? "border-border bg-white text-text-muted hover:border-[color:var(--danger)] hover:text-[color:var(--danger)]"
           : "border-border bg-white text-text-muted hover:border-border-strong hover:text-text"
@@ -446,6 +601,7 @@ function StackZone({
   label,
   cards,
   facedown,
+  compact,
   onHover,
   onMoveTop,
   onDropFrom,
@@ -454,6 +610,7 @@ function StackZone({
   label: string;
   cards: PlayCard[];
   facedown?: boolean;
+  compact?: boolean;
   onHover: (src: string | undefined, x: number, y: number) => void;
   onMoveTop?: (to: Zone) => void;
   onDropFrom?: (from: Zone, instanceId: string) => void;
@@ -463,12 +620,18 @@ function StackZone({
   const hoverSrc = facedown ? undefined : top?.imageNormal;
   const zoneName = label.toLowerCase() as Zone;
   return (
-    <div className="flex w-[220px] shrink-0 flex-col gap-1">
+    <div
+      className={`flex min-w-0 flex-col gap-1 ${
+        compact ? "w-full" : "w-[220px] shrink-0"
+      }`}
+    >
       <ZoneHeader label={label} count={cards.length} />
       <DropZone
         to={zoneName}
         onDrop={(from, id) => onDropFrom?.(from, id)}
-        className="relative h-[280px] w-[200px] rounded-xl bg-surface-raised shadow-sm ring-1 ring-border"
+        className={`relative w-full rounded-xl bg-surface-raised shadow-sm ring-1 ring-border ${
+          compact ? "aspect-[5/7] max-h-[11rem]" : "h-[280px] w-[200px]"
+        }`}
         onMouseEnter={(e) => onHover(hoverSrc, e.clientX, e.clientY)}
         onMouseMove={(e) => onHover(hoverSrc, e.clientX, e.clientY)}
         onMouseLeave={() => onHover(undefined, 0, 0)}
@@ -669,7 +832,7 @@ function MulliganPrompt({
   onMulligan: () => void;
 }) {
   return (
-    <div className="fixed bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-white px-4 py-2 shadow-lg ring-1 ring-black/10">
+    <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-white px-4 py-2 shadow-lg ring-1 ring-black/10 lg:bottom-4">
       <span className="text-sm text-text-muted">
         {mulligansTaken === 0
           ? "Opening hand"

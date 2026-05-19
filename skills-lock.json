@@ -78,6 +78,18 @@
       "sourceType": "github",
       "skillPath": "skills/web-design-guidelines/SKILL.md",
       "computedHash": "f3bc47f890f42a44db1007ab390709ec368e4b8c089baee6b0007182236ac474"
+    },
+    "workos": {
+      "source": "workos/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/workos/skills/workos/SKILL.md",
+      "computedHash": "ff8d5d307edb2e3c173f98215a405e50f7154de0bc295d8a87abc2e10b89b287"
+    },
+    "workos-widgets": {
+      "source": "workos/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/workos/skills/workos-widgets/SKILL.md",
+      "computedHash": "138d1733d9b92be8cae10dc8d7538e0a161c89d7b9330c335b35c27f8e13b781"
     }
   }
 }
