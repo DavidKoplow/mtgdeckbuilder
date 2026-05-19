@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { ScryfallCard } from "../lib/types";
+import { getHybridCandidateOracleIds } from "../lib/cardFilterIndex";
 import { oracleIdForCard } from "../lib/cardIdentity";
 import {
   type AdvancedFilters,
@@ -13,6 +14,7 @@ import {
   getCardsByIdentifiers,
   searchCards,
 } from "../lib/scryfall";
+import { searchOfflineCards } from "../lib/offline";
 import { ManaCost, ManaPip } from "./ManaCost";
 import { SetCombobox } from "./SetCombobox";
 
@@ -26,6 +28,8 @@ type Props = {
   previewCardId?: string | null;
   semanticRules: boolean;
   onSemanticRulesChange: (enabled: boolean) => void;
+  offlineActive?: boolean;
+  offlineReady?: boolean;
   similaritySeeds: ScryfallCard[];
   onRemoveSimilaritySeed: (oracleId: string) => void;
 };
@@ -40,6 +44,9 @@ const COLORS: { sym: string; name: string }[] = [
 const RARITIES = ["common", "uncommon", "rare", "mythic"];
 const SEARCH_DEBOUNCE_MS = 250;
 const CARD_TEXT_PREVIEW_LIMIT = 1024;
+const HYBRID_RESULT_LIMIT = 32;
+const HYBRID_POST_FILTER_FETCH_LIMIT = 256;
+const MAX_EXACT_VECTOR_CANDIDATE_IDS = 1024;
 export const MAX_SIMILARITY_SEEDS = 8;
 type SearchRunMode = "raw" | "hybrid";
 
@@ -55,6 +62,8 @@ export function SearchPanel({
   previewCardId = null,
   semanticRules,
   onSemanticRulesChange,
+  offlineActive = false,
+  offlineReady = false,
   similaritySeeds,
   onRemoveSimilaritySeed,
 }: Props) {
@@ -102,14 +111,29 @@ export function SearchPanel({
     }
 
     abortRef.current?.abort();
-      abortRef.current = null;
+    abortRef.current = null;
 
-      if (!ready) {
+    if (!ready) {
+      window.queueMicrotask(() => {
+        if (runRef.current !== runId) return;
         setLoading(false);
         setError(null);
         setTotal(null);
-        return;
-      }
+      });
+      return;
+    }
+
+    if (offlineActive && !offlineReady) {
+      window.queueMicrotask(() => {
+        if (runRef.current !== runId) return;
+        setLoading(false);
+        setError("Offline cache is not ready. Open Settings to download it.");
+        setResults([]);
+        setResultsKey(key);
+        setTotal(null);
+      });
+      return;
+    }
 
     debounceRef.current = window.setTimeout(async () => {
       debounceRef.current = null;
@@ -118,22 +142,47 @@ export function SearchPanel({
       setLoading(true);
       setError(null);
       try {
+        if (offlineActive) {
+          if (mode === "hybrid") {
+            throw new Error(
+              "Semantic and similarity search are unavailable while offline."
+            );
+          }
+          const resp = await searchOfflineCards(filters, {
+            limit: 75,
+            signal: ac.signal,
+          });
+          if (runRef.current !== runId || abortRef.current !== ac || ac.signal.aborted) {
+            return;
+          }
+          setResults(resp.data);
+          setResultsKey(key);
+          setTotal(resp.total_cards ?? resp.data.length);
+          return;
+        }
+
         if (mode === "hybrid") {
+          const constraintFilters = buildVectorConstraintFilters(
+            filters,
+            semanticRules
+          );
           let candidateOracleIds: string[] | undefined;
+          let postFilterOracleIds: Set<string> | undefined;
           if (filterQuery) {
-            const filtered = await searchCards(filterQuery, {
-              order: filters.sort,
-              signal: ac.signal,
-            });
+            candidateOracleIds = await getHybridCandidateOracleIds(
+              constraintFilters,
+              ac.signal
+            );
             if (runRef.current !== runId || ac.signal.aborted) return;
-            candidateOracleIds = filtered.data
-              .map(oracleIdForCard)
-              .filter((oracleId): oracleId is string => oracleId !== undefined);
             if (candidateOracleIds.length === 0) {
               setResults([]);
               setResultsKey(key);
               setTotal(0);
               return;
+            }
+            if (candidateOracleIds.length > MAX_EXACT_VECTOR_CANDIDATE_IDS) {
+              postFilterOracleIds = new Set(candidateOracleIds);
+              candidateOracleIds = undefined;
             }
           }
 
@@ -141,14 +190,24 @@ export function SearchPanel({
             query: vectorQuery,
             oracleIds: seedOracleIds,
             candidateOracleIds,
-            limit: 32,
+            limit: postFilterOracleIds
+              ? HYBRID_POST_FILTER_FETCH_LIMIT
+              : HYBRID_RESULT_LIMIT,
           })) as SimilarCardMatch[];
           if (runRef.current !== runId || abortRef.current !== ac || ac.signal.aborted) {
             return;
           }
-          const cards = await hydrateSimilarityMatches(matches, ac.signal);
+          let cards = await hydrateSimilarityMatches(matches, ac.signal);
           if (runRef.current !== runId || abortRef.current !== ac || ac.signal.aborted) {
             return;
+          }
+          if (postFilterOracleIds) {
+            cards = cards
+              .filter((card) => {
+                const oracleId = oracleIdForCard(card);
+                return oracleId ? postFilterOracleIds.has(oracleId) : false;
+              })
+              .slice(0, HYBRID_RESULT_LIMIT);
           }
           setResults(cards);
           setResultsKey(key);
@@ -191,7 +250,7 @@ export function SearchPanel({
       abortRef.current = null;
       runRef.current += 1;
     };
-  }, [filters, semanticRules, seedKey, hybridCards]);
+  }, [filters, semanticRules, seedKey, hybridCards, offlineActive, offlineReady]);
 
   function update<K extends keyof AdvancedFilters>(
     key: K,
@@ -232,7 +291,9 @@ export function SearchPanel({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-sm font-semibold text-text">Find cards</div>
-            <div className="text-[11px] text-text-subtle">Scryfall catalog</div>
+            <div className="text-[11px] text-text-subtle">
+              {offlineActive ? "Local offline catalog" : "Scryfall catalog"}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={clearAll} className="control px-2 py-1 text-[11px]">
@@ -257,6 +318,7 @@ export function SearchPanel({
                   <input
                     type="checkbox"
                     checked={semanticRules}
+                    disabled={offlineActive}
                     onChange={(e) => onSemanticRulesChange(e.target.checked)}
                     className="h-3 w-3 accent-accent"
                   />
@@ -473,6 +535,7 @@ export function SearchPanel({
                 <option value="name">Name</option>
                 <option value="cmc">Mana value</option>
                 <option value="color">Color</option>
+                <option value="rarity">Rarity</option>
                 <option value="released">Release date</option>
                 <option value="usd">Price (USD)</option>
                 <option value="edhrec">EDHREC popularity</option>
@@ -524,8 +587,8 @@ export function SearchPanel({
         <ul className="divide-y divide-border">
           {visibleResults.map((card, index) => {
             const thumb = getCardImage(card, "small");
-            const normal = getCardImage(card, "normal");
-            const back = getCardBackImage(card, "normal");
+            const normal = offlineActive ? thumb : getCardImage(card, "normal");
+            const back = offlineActive ? undefined : getCardBackImage(card, "normal");
             const isPreviewed = previewCardId != null && card.id === previewCardId;
             const oracleText = truncateText(
               getOracleText(card),
@@ -744,8 +807,8 @@ function Field({
   children,
 }: {
   label: string;
-  labelAccessory?: React.ReactNode;
-  children: React.ReactNode;
+  labelAccessory?: ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5 text-[11px]">

@@ -56,7 +56,14 @@ export type AdvancedFilters = {
   format?: string; // legal:standard, etc.
   usdMin?: number;
   usdMax?: number;
-  sort?: "name" | "cmc" | "color" | "released" | "usd" | "edhrec";
+  sort?:
+    | "name"
+    | "cmc"
+    | "color"
+    | "rarity"
+    | "released"
+    | "usd"
+    | "edhrec";
 };
 
 export function buildQuery(f: AdvancedFilters): string {
@@ -239,17 +246,31 @@ export async function getAllSets(): Promise<ScryfallSet[]> {
   if (setsCache) return setsCache;
   if (setsPromise) return setsPromise;
   setsPromise = throttled(async () => {
-    const res = await fetch(`${API}/sets`);
-    const body = await jsonOrThrow<ScryfallSetsResponse>(res);
-    // Sort newest first; put paper sets before digital
-    const data = body.data.slice().sort((a, b) => {
-      const da = a.released_at ?? "";
-      const db = b.released_at ?? "";
-      if (da !== db) return db.localeCompare(da);
-      return a.name.localeCompare(b.name);
-    });
-    setsCache = data;
-    return data;
+    try {
+      const res = await fetch(`${API}/sets`);
+      const body = await jsonOrThrow<ScryfallSetsResponse>(res);
+      // Sort newest first; put paper sets before digital
+      const data = sortSets(body.data);
+      setsCache = data;
+      return data;
+    } catch (error) {
+      const { readOfflineSets } = await import("./offline");
+      const data = sortSets(await readOfflineSets());
+      if (data.length > 0) {
+        setsCache = data;
+        return data;
+      }
+      throw error;
+    }
   });
   return setsPromise;
+}
+
+function sortSets(data: ScryfallSet[]) {
+  return data.slice().sort((a, b) => {
+    const da = a.released_at ?? "";
+    const db = b.released_at ?? "";
+    if (da !== db) return db.localeCompare(da);
+    return a.name.localeCompare(b.name);
+  });
 }

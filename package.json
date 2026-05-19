@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "convex:dev": "convex dev",
+    "filter-index:build": "node scripts/build_card_filter_index.mjs",
     "vector:serve": ".venv/bin/python scripts/vector_search_server.py --device mps --trust-remote-code --no-preload-reranker --no-default-rerank",
     "vector:build-convex": "node scripts/build_convex_card_embeddings.mjs",
     "vector:import-convex": "npm run vector:build-convex && npx convex import --table cardEmbeddings --format jsonLines --replace -y data/convex_card_embeddings.jsonl",

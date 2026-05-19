@@ -10,14 +10,24 @@ import {
 } from "../lib/import";
 
 type Props = {
-  onImport: (entries: DeckEntry[], mode: "merge" | "replace") => void;
+  onImport: (
+    entries: DeckEntry[],
+    sideboard: DeckEntry[],
+    mode: "merge" | "replace"
+  ) => void;
   onDeckNameHint?: (name: string) => void;
+  resolveLines?: (lines: ParsedLine[]) => Promise<ImportResult>;
   disabled?: boolean;
 };
 
 type Stage = "idle" | "resolving" | "preview" | "error";
 
-export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
+export function ImportButton({
+  onImport,
+  onDeckNameHint,
+  resolveLines: resolveLinesOverride,
+  disabled,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [mode, setMode] = useState<"merge" | "replace">("merge");
@@ -60,7 +70,8 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
     setStage("resolving");
     setError(null);
     try {
-      const result = await resolveLines(lines);
+      const resolver = resolveLinesOverride ?? resolveLines;
+      const result = await resolver(lines);
       setPreview(result);
       setStage("preview");
     } catch (e) {
@@ -71,7 +82,7 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
 
   function onConfirm() {
     if (!preview) return;
-    onImport(preview.entries, mode);
+    onImport(preview.entries, preview.sideboard, mode);
     if (parsedName && onDeckNameHint && mode === "replace") {
       onDeckNameHint(parsedName);
     }
@@ -85,12 +96,22 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
 
   const parsedLines: ParsedLine[] = preview
     ? [
-        ...preview.entries.map((e) => ({ quantity: e.quantity, name: e.name })),
+        ...preview.entries.map((e) => ({
+          quantity: e.quantity,
+          name: e.name,
+          zone: "main" as const,
+        })),
+        ...preview.sideboard.map((e) => ({
+          quantity: e.quantity,
+          name: e.name,
+          zone: "sideboard" as const,
+        })),
         ...preview.unresolved,
       ]
     : [];
   const totalResolved =
-    preview?.entries.reduce((n, e) => n + e.quantity, 0) ?? 0;
+    (preview?.entries.reduce((n, e) => n + e.quantity, 0) ?? 0) +
+    (preview?.sideboard.reduce((n, e) => n + e.quantity, 0) ?? 0);
 
   return (
     <>
@@ -106,7 +127,7 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
       </button>
       {open && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
           onClick={close}
         >
           <div
@@ -215,7 +236,11 @@ export function ImportButton({ onImport, onDeckNameHint, disabled }: Props) {
                   </button>
                   <button
                     onClick={onConfirm}
-                    disabled={!preview || preview.entries.length === 0}
+                    disabled={
+                      !preview ||
+                      (preview.entries.length === 0 &&
+                        preview.sideboard.length === 0)
+                    }
                     className="control-primary px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
                   >
                     {mode === "replace" ? "Replace deck" : "Add to deck"}
@@ -321,6 +346,7 @@ function ImportPreview({
             <tr>
               <th className="w-10 px-2 py-1">#</th>
               <th className="px-2 py-1">Card</th>
+              <th className="w-24 px-2 py-1">Board</th>
             </tr>
           </thead>
           <tbody>
@@ -335,6 +361,9 @@ function ImportPreview({
                 >
                   <td className="px-2 py-1 tabular-nums">{l.quantity}</td>
                   <td className="px-2 py-1">{l.name}</td>
+                  <td className="px-2 py-1 text-text-subtle">
+                    {l.zone === "sideboard" ? "Sideboard" : "Main"}
+                  </td>
                 </tr>
               );
             })}

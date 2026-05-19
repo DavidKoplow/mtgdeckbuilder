@@ -36,14 +36,14 @@ export function DeckSelector({
   return (
     <>
       <div
-        className={`fixed inset-0 z-30 bg-black/35 backdrop-blur-sm transition-opacity ${
+        className={`fixed inset-0 z-[70] bg-black/35 backdrop-blur-sm transition-opacity ${
           open ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={onClose}
         aria-hidden
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-80 max-w-[86vw] flex-col border-r border-border bg-surface shadow-2xl transition-transform ${
+        className={`fixed inset-y-0 left-0 z-[80] flex w-80 max-w-[86vw] flex-col border-r border-border bg-surface shadow-2xl transition-transform ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-hidden={!open}
@@ -101,7 +101,8 @@ export function DeckSelector({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold">{d.name}</div>
                     <div className="mt-0.5 text-[11px] capitalize text-text-subtle">
-                      {d.cardCount} cards · {d.format}
+                      {d.cardCount} cards · {d.sideboardCount} sideboard ·{" "}
+                      {d.format}
                     </div>
                   </div>
                   {confirmingId === d.id ? (

@@ -10,12 +10,14 @@ const deckEntry = v.object({
   cardId: v.string(),
   name: v.string(),
   quantity: v.number(),
+  isCommander: v.optional(v.boolean()),
   imageSmall: v.optional(v.string()),
   imageNormal: v.optional(v.string()),
   manaCost: v.optional(v.string()),
   cmc: v.optional(v.number()),
   typeLine: v.optional(v.string()),
   colors: v.optional(v.array(v.string())),
+  rarity: v.optional(v.string()),
   set: v.optional(v.string()),
   collectorNumber: v.optional(v.string()),
   priceUsd: v.optional(v.number()),
@@ -26,6 +28,7 @@ const deckSummary = v.object({
   name: v.string(),
   format: v.string(),
   cardCount: v.number(),
+  sideboardCount: v.number(),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -35,21 +38,25 @@ const deck = v.object({
   name: v.string(),
   format: v.string(),
   cardCount: v.number(),
+  sideboardCount: v.number(),
   createdAt: v.number(),
   updatedAt: v.number(),
   entries: v.array(deckEntry),
+  sideboard: v.array(deckEntry),
 });
 
 type DeckEntry = {
   cardId: string;
   name: string;
   quantity: number;
+  isCommander?: boolean;
   imageSmall?: string;
   imageNormal?: string;
   manaCost?: string;
   cmc?: number;
   typeLine?: string;
   colors?: string[];
+  rarity?: string;
   set?: string;
   collectorNumber?: string;
   priceUsd?: number;
@@ -60,14 +67,17 @@ type Deck = {
   name: string;
   format: string;
   cardCount: number;
+  sideboardCount: number;
   createdAt: number;
   updatedAt: number;
   entries: DeckEntry[];
+  sideboard: DeckEntry[];
 };
 
 type DeckCardRef = {
   cardKey: number;
   quantity: number;
+  isCommander?: boolean;
 };
 
 export const listDecks = query({
@@ -85,11 +95,14 @@ export const listDecks = query({
     return deckDocs
       .map((deckDoc) => {
         const cards = deckCardRefs(deckDoc);
+        const sideboardCards = deckSideboardRefs(deckDoc);
         return {
           id: deckDoc.deckId,
           name: deckDoc.name,
           format: deckDoc.format,
           cardCount: deckDoc.cardCount ?? countCards(cards),
+          sideboardCount:
+            deckDoc.sideboardCount ?? countCards(sideboardCards),
           createdAt: deckDoc.createdAt,
           updatedAt: deckDoc.updatedAt,
         };
@@ -111,17 +124,58 @@ export const get = query({
     if (!deckDoc) return null;
 
     const cards = deckCardRefs(deckDoc);
+    const sideboardCards = deckSideboardRefs(deckDoc);
     const entries = await hydrateEntries(ctx, cards);
+    const sideboard = await hydrateEntries(ctx, sideboardCards);
 
     return {
       id: deckDoc.deckId,
       name: deckDoc.name,
       format: deckDoc.format,
       cardCount: deckDoc.cardCount ?? countCards(cards),
+      sideboardCount: deckDoc.sideboardCount ?? countCards(sideboardCards),
       createdAt: deckDoc.createdAt,
       updatedAt: deckDoc.updatedAt,
       entries,
+      sideboard,
     };
+  },
+});
+
+export const listDecksFull = query({
+  args: {},
+  returns: v.array(deck),
+  handler: async (ctx): Promise<Deck[]> => {
+    const userId = await getUserId(ctx);
+    if (!userId) return [];
+
+    const deckDocs = await ctx.db
+      .query("userDecks")
+      .withIndex("by_user_deck", (q) => q.eq("userId", userId))
+      .collect();
+
+    const decks = await Promise.all(
+      deckDocs.map(async (deckDoc) => {
+        const cards = deckCardRefs(deckDoc);
+        const sideboardCards = deckSideboardRefs(deckDoc);
+        const entries = await hydrateEntries(ctx, cards);
+        const sideboard = await hydrateEntries(ctx, sideboardCards);
+        return {
+          id: deckDoc.deckId,
+          name: deckDoc.name,
+          format: deckDoc.format,
+          cardCount: deckDoc.cardCount ?? countCards(cards),
+          sideboardCount:
+            deckDoc.sideboardCount ?? countCards(sideboardCards),
+          createdAt: deckDoc.createdAt,
+          updatedAt: deckDoc.updatedAt,
+          entries,
+          sideboard,
+        };
+      })
+    );
+
+    return decks.sort((a, b) => a.createdAt - b.createdAt);
   },
 });
 
@@ -143,7 +197,9 @@ export const create = mutation({
       name: args.name.trim() || "Untitled Deck",
       format: "commander",
       cards: [],
+      sideboardCards: [],
       cardCount: 0,
+      sideboardCount: 0,
       createdAt: now,
       updatedAt: now,
     });
@@ -226,11 +282,14 @@ export const addCard = mutation({
       const nextQuantity = toUint8(existing.quantity + quantity);
       nextCards = cards.map((card) =>
         card.cardKey === cardKey
-          ? { cardKey, quantity: nextQuantity }
+          ? { cardKey, quantity: nextQuantity, isCommander: card.isCommander }
           : card
       );
     } else {
-      nextCards = [...cards, { cardKey, quantity }];
+      nextCards = [
+        ...cards,
+        { cardKey, quantity, isCommander: args.card.isCommander },
+      ];
     }
 
     await patchDeckCards(ctx, deckDoc, nextCards);
@@ -244,6 +303,7 @@ export const setQuantity = mutation({
     deckId: v.string(),
     cardId: v.string(),
     quantity: v.number(),
+    zone: v.optional(v.union(v.literal("main"), v.literal("sideboard"))),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -253,16 +313,105 @@ export const setQuantity = mutation({
     if (!cardDoc) return null;
 
     const quantity = Math.floor(args.quantity);
-    const nextCards =
+    const zone = args.zone ?? "main";
+    const cards = deckCardRefs(deckDoc);
+    const sideboardCards = deckSideboardRefs(deckDoc);
+    const targetCards = zone === "sideboard" ? sideboardCards : cards;
+    const nextTargetCards =
       quantity <= 0
-        ? deckCardRefs(deckDoc).filter(
+        ? targetCards.filter(
             (card) => card.cardKey !== cardDoc.cardKey
           )
-        : deckCardRefs(deckDoc).map((card) =>
+        : targetCards.map((card) =>
             card.cardKey === cardDoc.cardKey
-              ? { cardKey: card.cardKey, quantity: toUint8(quantity) }
+              ? {
+                  cardKey: card.cardKey,
+                  quantity: toUint8(quantity),
+                  isCommander:
+                    zone === "main" ? card.isCommander : undefined,
+                }
               : card
           );
+
+    await patchDeckRefs(ctx, deckDoc, {
+      cards: zone === "sideboard" ? cards : nextTargetCards,
+      sideboardCards:
+        zone === "sideboard" ? nextTargetCards : sideboardCards,
+    });
+
+    return null;
+  },
+});
+
+export const moveCard = mutation({
+  args: {
+    deckId: v.string(),
+    cardId: v.string(),
+    to: v.union(v.literal("main"), v.literal("sideboard")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const deckDoc = await requireDeckDoc(ctx, userId, args.deckId);
+    const cardDoc = await getCardByScryfallId(ctx, args.cardId);
+    if (!cardDoc) return null;
+
+    const cards = deckCardRefs(deckDoc);
+    const sideboardCards = deckSideboardRefs(deckDoc);
+    const fromCards = args.to === "sideboard" ? cards : sideboardCards;
+    const moving = fromCards.find((card) => card.cardKey === cardDoc.cardKey);
+    if (!moving) return null;
+
+    if (args.to === "sideboard") {
+      await patchDeckRefs(ctx, deckDoc, {
+        cards: cards.filter((card) => card.cardKey !== cardDoc.cardKey),
+        sideboardCards: [
+          ...sideboardCards,
+          { cardKey: moving.cardKey, quantity: moving.quantity },
+        ],
+      });
+      return null;
+    }
+
+    await patchDeckRefs(ctx, deckDoc, {
+      cards: [
+        ...cards,
+        { cardKey: moving.cardKey, quantity: moving.quantity },
+      ],
+      sideboardCards: sideboardCards.filter(
+        (card) => card.cardKey !== cardDoc.cardKey
+      ),
+    });
+
+    return null;
+  },
+});
+
+export const setCommander = mutation({
+  args: {
+    deckId: v.string(),
+    cardId: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const deckDoc = await requireDeckDoc(ctx, userId, args.deckId);
+    const cards = deckCardRefs(deckDoc);
+
+    let commanderKey: number | null = null;
+    if (args.cardId !== undefined) {
+      const cardDoc = await getCardByScryfallId(ctx, args.cardId);
+      if (!cardDoc) return null;
+      const cardInDeck = cards.some((card) => card.cardKey === cardDoc.cardKey);
+      if (!cardInDeck) return null;
+      commanderKey = cardDoc.cardKey;
+    }
+
+    const nextCards = cards.map((card) => ({
+      ...card,
+      isCommander:
+        commanderKey !== null ? card.cardKey === commanderKey : undefined,
+    }));
 
     await patchDeckCards(ctx, deckDoc, nextCards);
 
@@ -279,7 +428,10 @@ export const clear = mutation({
     const userId = await requireUserId(ctx);
     const deckDoc = await requireDeckDoc(ctx, userId, args.deckId);
 
-    await patchDeckCards(ctx, deckDoc, []);
+    await patchDeckRefs(ctx, deckDoc, {
+      cards: [],
+      sideboardCards: [],
+    });
 
     return null;
   },
@@ -289,6 +441,7 @@ export const importEntries = mutation({
   args: {
     deckId: v.string(),
     entries: v.array(deckEntry),
+    sideboard: v.optional(v.array(deckEntry)),
     mode: v.union(v.literal("merge"), v.literal("replace")),
   },
   returns: v.null(),
@@ -296,9 +449,17 @@ export const importEntries = mutation({
     const userId = await requireUserId(ctx);
     const deckDoc = await requireDeckDoc(ctx, userId, args.deckId);
     const incoming = await entriesToCardRefs(ctx, args.entries);
+    const incomingSideboard = await entriesToCardRefs(
+      ctx,
+      args.sideboard ?? [],
+      false
+    );
 
     if (args.mode === "replace") {
-      await patchDeckCards(ctx, deckDoc, incoming);
+      await patchDeckRefs(ctx, deckDoc, {
+        cards: incoming,
+        sideboardCards: incomingSideboard,
+      });
       return null;
     }
 
@@ -316,7 +477,24 @@ export const importEntries = mutation({
       });
     }
 
-    await patchDeckCards(ctx, deckDoc, Array.from(nextByKey.values()));
+    const nextSideboardByKey = new Map(
+      deckSideboardRefs(deckDoc).map((card) => [card.cardKey, { ...card }])
+    );
+
+    for (const card of incomingSideboard) {
+      const existing = nextSideboardByKey.get(card.cardKey);
+      nextSideboardByKey.set(card.cardKey, {
+        cardKey: card.cardKey,
+        quantity: existing
+          ? toUint8(existing.quantity + card.quantity)
+          : card.quantity,
+      });
+    }
+
+    await patchDeckRefs(ctx, deckDoc, {
+      cards: Array.from(nextByKey.values()),
+      sideboardCards: Array.from(nextSideboardByKey.values()),
+    });
 
     return null;
   },
@@ -331,12 +509,21 @@ export const replaceDeck = mutation({
     const userId = await requireUserId(ctx);
     const deckDoc = await requireDeckDoc(ctx, userId, args.deck.id);
     const cards = await entriesToCardRefs(ctx, args.deck.entries);
+    const sideboardCards = await entriesToCardRefs(
+      ctx,
+      args.deck.sideboard,
+      false
+    );
+    const normalizedCards = normalizeCardRefs(cards);
+    const normalizedSideboardCards = normalizeCardRefs(sideboardCards, false);
 
     await ctx.db.patch(deckDoc._id, {
       name: args.deck.name,
       format: args.deck.format,
-      cards,
-      cardCount: countCards(cards),
+      cards: normalizedCards,
+      sideboardCards: normalizedSideboardCards,
+      cardCount: countCards(normalizedCards),
+      sideboardCount: countCards(normalizedSideboardCards),
       updatedAt: Date.now(),
     });
 
@@ -344,13 +531,14 @@ export const replaceDeck = mutation({
   },
 });
 
-export const patchPrices = mutation({
+export const patchCardData = mutation({
   args: {
     deckId: v.string(),
-    prices: v.array(
+    cards: v.array(
       v.object({
         cardId: v.string(),
         priceUsd: v.optional(v.number()),
+        rarity: v.optional(v.string()),
       })
     ),
   },
@@ -359,11 +547,20 @@ export const patchPrices = mutation({
     const userId = await requireUserId(ctx);
     await requireDeckDoc(ctx, userId, args.deckId);
 
-    for (const price of args.prices) {
-      if (price.priceUsd === undefined) continue;
-      const cardDoc = await getCardByScryfallId(ctx, price.cardId);
-      if (!cardDoc || cardDoc.priceUsd !== undefined) continue;
-      await ctx.db.patch(cardDoc._id, { priceUsd: price.priceUsd });
+    for (const card of args.cards) {
+      const cardDoc = await getCardByScryfallId(ctx, card.cardId);
+      if (!cardDoc) continue;
+
+      const patch: Partial<Omit<Doc<"cards">, "_id" | "_creationTime">> = {};
+      if (card.priceUsd !== undefined && cardDoc.priceUsd === undefined) {
+        patch.priceUsd = card.priceUsd;
+      }
+      if (card.rarity !== undefined && cardDoc.rarity !== card.rarity) {
+        patch.rarity = card.rarity;
+      }
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(cardDoc._id, patch);
+      }
     }
 
     return null;
@@ -408,6 +605,14 @@ function deckCardRefs(deckDoc: Doc<"userDecks">): DeckCardRef[] {
   return (deckDoc.cards ?? []).map((card) => ({
     cardKey: asUint24(card.cardKey),
     quantity: toUint8(card.quantity),
+    isCommander: card.isCommander === true,
+  }));
+}
+
+function deckSideboardRefs(deckDoc: Doc<"userDecks">): DeckCardRef[] {
+  return (deckDoc.sideboardCards ?? []).map((card) => ({
+    cardKey: asUint24(card.cardKey),
+    quantity: toUint8(card.quantity),
   }));
 }
 
@@ -417,23 +622,31 @@ async function hydrateEntries(ctx: QueryCtx, cards: DeckCardRef[]) {
   for (const card of cards) {
     const cardDoc = await getCardByKey(ctx, card.cardKey);
     if (!cardDoc) continue;
-    entries.push(cardDocToEntry(cardDoc, card.quantity));
+    entries.push(cardDocToEntry(cardDoc, card.quantity, card.isCommander));
   }
 
   return entries;
 }
 
-async function entriesToCardRefs(ctx: MutationCtx, entries: DeckEntry[]) {
+async function entriesToCardRefs(
+  ctx: MutationCtx,
+  entries: DeckEntry[],
+  allowCommander = true
+) {
   const byKey = new Map<number, DeckCardRef>();
 
   for (const entry of entries) {
     const quantity = toUint8(entry.quantity);
     const cardKey = await ensureCard(ctx, entry);
     const existing = byKey.get(cardKey);
-    byKey.set(cardKey, {
+    const next: DeckCardRef = {
       cardKey,
       quantity: existing ? toUint8(existing.quantity + quantity) : quantity,
-    });
+    };
+    if (allowCommander && (existing?.isCommander || entry.isCommander)) {
+      next.isCommander = true;
+    }
+    byKey.set(cardKey, next);
   }
 
   return Array.from(byKey.values());
@@ -491,40 +704,77 @@ async function patchDeckCards(
   deckDoc: Doc<"userDecks">,
   cards: DeckCardRef[]
 ) {
-  const normalized = normalizeCardRefs(cards);
+  await patchDeckRefs(ctx, deckDoc, {
+    cards,
+    sideboardCards: deckSideboardRefs(deckDoc),
+  });
+}
+
+async function patchDeckRefs(
+  ctx: MutationCtx,
+  deckDoc: Doc<"userDecks">,
+  refs: {
+    cards: DeckCardRef[];
+    sideboardCards: DeckCardRef[];
+  }
+) {
+  const normalized = normalizeCardRefs(refs.cards);
+  const normalizedSideboard = normalizeCardRefs(refs.sideboardCards, false);
   await ctx.db.patch(deckDoc._id, {
     cards: normalized,
+    sideboardCards: normalizedSideboard,
     cardCount: countCards(normalized),
+    sideboardCount: countCards(normalizedSideboard),
     updatedAt: Date.now(),
   });
 }
 
-function normalizeCardRefs(cards: DeckCardRef[]) {
+function normalizeCardRefs(cards: DeckCardRef[], allowCommander = true) {
   const byKey = new Map<number, DeckCardRef>();
 
   for (const card of cards) {
     const cardKey = asUint24(card.cardKey);
     const quantity = toUint8(card.quantity);
     const existing = byKey.get(cardKey);
-    byKey.set(cardKey, {
+    const next: DeckCardRef = {
       cardKey,
       quantity: existing ? toUint8(existing.quantity + quantity) : quantity,
-    });
+    };
+    if (allowCommander && (existing?.isCommander || card.isCommander)) {
+      next.isCommander = true;
+    }
+    byKey.set(cardKey, next);
   }
 
-  return Array.from(byKey.values());
+  let commanderAssigned = false;
+  return Array.from(byKey.values()).map((card) => {
+    if (!allowCommander || !card.isCommander) {
+      return { cardKey: card.cardKey, quantity: card.quantity };
+    }
+    if (commanderAssigned) {
+      return { cardKey: card.cardKey, quantity: card.quantity };
+    }
+    commanderAssigned = true;
+    return { ...card, isCommander: true };
+  });
 }
 
 function countCards(cards: DeckCardRef[]) {
   return cards.reduce((total, card) => total + card.quantity, 0);
 }
 
-function cardDocToEntry(cardDoc: Doc<"cards">, quantity: number): DeckEntry {
+function cardDocToEntry(
+  cardDoc: Doc<"cards">,
+  quantity: number,
+  isCommander?: boolean
+): DeckEntry {
   const entry: DeckEntry = {
     cardId: cardDoc.scryfallId,
     name: cardDoc.name,
     quantity,
   };
+
+  if (isCommander) entry.isCommander = true;
 
   if (cardDoc.imageSmall !== undefined) entry.imageSmall = cardDoc.imageSmall;
   if (cardDoc.imageNormal !== undefined) entry.imageNormal = cardDoc.imageNormal;
@@ -532,6 +782,7 @@ function cardDocToEntry(cardDoc: Doc<"cards">, quantity: number): DeckEntry {
   if (cardDoc.cmc !== undefined) entry.cmc = cardDoc.cmc;
   if (cardDoc.typeLine !== undefined) entry.typeLine = cardDoc.typeLine;
   if (cardDoc.colors !== undefined) entry.colors = cardDoc.colors;
+  if (cardDoc.rarity !== undefined) entry.rarity = cardDoc.rarity;
   if (cardDoc.set !== undefined) entry.set = cardDoc.set;
   if (cardDoc.collectorNumber !== undefined) {
     entry.collectorNumber = cardDoc.collectorNumber;
@@ -552,6 +803,7 @@ function cleanCardPatch(entry: DeckEntry) {
   if (entry.cmc !== undefined) doc.cmc = entry.cmc;
   if (entry.typeLine !== undefined) doc.typeLine = entry.typeLine;
   if (entry.colors !== undefined) doc.colors = entry.colors;
+  if (entry.rarity !== undefined) doc.rarity = entry.rarity;
   if (entry.set !== undefined) doc.set = entry.set;
   if (entry.collectorNumber !== undefined) {
     doc.collectorNumber = entry.collectorNumber;

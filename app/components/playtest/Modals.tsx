@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { PlayCard, Zone } from "../../lib/playtest";
+import type { PlayCard, PlayTokenTemplate, Zone } from "../../lib/playtest";
 
 function Backdrop({
   children,
@@ -331,25 +331,56 @@ export function SearchModal({
 
 export function TokenCreator({
   open,
+  recentTokens,
   onClose,
   onCreate,
 }: {
   open: boolean;
+  recentTokens: PlayTokenTemplate[];
   onClose: () => void;
-  onCreate: (token: {
-    name: string;
-    typeLine?: string;
-    tokenNote?: string;
-  }) => void;
+  onCreate: (token: PlayTokenTemplate) => void;
 }) {
   const [name, setName] = useState("");
   const [pt, setPt] = useState("");
   const [subtype, setSubtype] = useState("");
+  function createToken(token: PlayTokenTemplate) {
+    onCreate(token);
+    setName("");
+    setPt("");
+    setSubtype("");
+    onClose();
+  }
+
   if (!open) return null;
   return (
     <Backdrop onClose={onClose}>
       <div className="flex flex-col gap-3 p-4">
         <h2 className="text-base font-semibold">Create token</h2>
+        {recentTokens.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-text-muted">
+              Recent tokens
+            </span>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {recentTokens.map((token) => (
+                <button
+                  key={`${token.name}:${token.typeLine ?? ""}:${token.tokenNote ?? ""}`}
+                  type="button"
+                  onClick={() => createToken(token)}
+                  className="min-h-14 rounded-lg border border-border bg-surface-raised px-2 py-1.5 text-left text-xs transition hover:border-border-strong hover:bg-surface"
+                >
+                  <span className="block truncate font-semibold text-text">
+                    {token.name}
+                  </span>
+                  <span className="block truncate text-text-subtle">
+                    {token.tokenNote ? `${token.tokenNote} ` : ""}
+                    {token.typeLine ?? "Token Creature"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-3 gap-2 text-xs">
           <label className="flex flex-col gap-1">
             <span className="text-text-muted">Name</span>
@@ -393,15 +424,11 @@ export function TokenCreator({
               const typeLine = subtype.trim()
                 ? `Token Creature — ${subtype.trim()}`
                 : "Token Creature";
-              onCreate({
+              createToken({
                 name: n,
                 typeLine,
                 tokenNote: pt.trim() || undefined,
               });
-              setName("");
-              setPt("");
-              setSubtype("");
-              onClose();
             }}
             className="control-primary px-3 py-1 text-sm font-semibold disabled:opacity-40"
           >

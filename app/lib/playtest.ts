@@ -3,12 +3,20 @@
 import { useCallback, useMemo, useReducer } from "react";
 import type { Deck, DeckEntry } from "./types";
 
-export type Zone = "library" | "hand" | "battlefield" | "graveyard" | "exile";
+export type Zone =
+  | "library"
+  | "hand"
+  | "battlefield"
+  | "graveyard"
+  | "exile"
+  | "command";
+export type PlayMode = "normal" | "commander";
 
 export type PlayCard = {
   instanceId: string;
   cardId: string;
   name: string;
+  isCommander?: boolean;
   imageNormal?: string;
   imageSmall?: string;
   typeLine?: string;
@@ -21,15 +29,25 @@ export type PlayCard = {
   tokenNote?: string;
 };
 
+export type PlayTokenTemplate = {
+  name: string;
+  typeLine?: string;
+  tokenNote?: string;
+};
+
 export type Phase = "mulligan-deciding" | "mulligan-bottoming" | "playing";
 
 export type PlayState = {
   library: PlayCard[];
+  command: PlayCard[];
   hand: PlayCard[];
   battlefield: PlayCard[];
   graveyard: PlayCard[];
   exile: PlayCard[];
   life: number;
+  poison: number;
+  recentTokens: PlayTokenTemplate[];
+  mode: PlayMode;
   turn: number;
   phase: Phase;
   mulligansTaken: number;
@@ -37,19 +55,30 @@ export type PlayState = {
   search: { open: boolean; dest: Zone } | null;
 };
 
+const RECENT_TOKEN_LIMIT = 6;
+
 function uid(): string {
   return (
     Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
   );
 }
 
-function entryToInstances(e: DeckEntry): PlayCard[] {
+function startingLife(mode: PlayMode) {
+  return mode === "commander" ? 40 : 20;
+}
+
+function entryToInstances(
+  e: DeckEntry,
+  quantity = e.quantity,
+  isCommander = false
+): PlayCard[] {
   const out: PlayCard[] = [];
-  for (let i = 0; i < e.quantity; i++) {
+  for (let i = 0; i < quantity; i++) {
     out.push({
       instanceId: uid(),
       cardId: e.cardId,
       name: e.name,
+      isCommander,
       imageNormal: e.imageNormal,
       imageSmall: e.imageSmall,
       typeLine: e.typeLine,
@@ -73,21 +102,46 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 export function buildLibrary(deck: Deck): PlayCard[] {
-  const lib: PlayCard[] = [];
-  for (const e of deck.entries) lib.push(...entryToInstances(e));
-  return shuffle(lib);
+  return buildStartingZones(deck, "normal").library;
 }
 
-function initialState(deck: Deck, life = 20): PlayState {
-  const lib = buildLibrary(deck);
+function buildStartingZones(deck: Deck, mode: PlayMode) {
+  const lib: PlayCard[] = [];
+  const command: PlayCard[] = [];
+
+  for (const e of deck.entries) {
+    const commanderQuantity = mode === "commander" && e.isCommander ? 1 : 0;
+    if (commanderQuantity > 0) {
+      command.push(...entryToInstances(e, commanderQuantity, true));
+    }
+
+    const libraryQuantity = Math.max(0, e.quantity - commanderQuantity);
+    if (libraryQuantity > 0) {
+      lib.push(...entryToInstances(e, libraryQuantity));
+    }
+  }
+
+  return { library: shuffle(lib), command };
+}
+
+function initialState(
+  deck: Deck,
+  mode: PlayMode = "normal",
+  life = startingLife(mode)
+): PlayState {
+  const { library: lib, command } = buildStartingZones(deck, mode);
   const hand = lib.splice(0, Math.min(7, lib.length));
   return {
     library: lib,
+    command,
     hand,
     battlefield: [],
     graveyard: [],
     exile: [],
     life,
+    poison: 0,
+    recentTokens: [],
+    mode,
     turn: 1,
     phase: "mulligan-deciding",
     mulligansTaken: 0,
@@ -97,7 +151,7 @@ function initialState(deck: Deck, life = 20): PlayState {
 }
 
 type Action =
-  | { type: "new-game"; deck: Deck; life?: number }
+  | { type: "new-game"; deck: Deck; mode?: PlayMode; life?: number }
   | { type: "shuffle" }
   | { type: "draw"; count: number }
   | {
@@ -112,10 +166,12 @@ type Action =
   | { type: "counter"; instanceId: string; kind: string; delta: number }
   | {
       type: "add-token";
-      token: { name: string; typeLine?: string; tokenNote?: string };
+      token: PlayTokenTemplate;
     }
   | { type: "life"; delta: number }
   | { type: "set-life"; value: number }
+  | { type: "poison"; delta: number }
+  | { type: "set-poison"; value: number }
   | { type: "end-turn" }
   | { type: "mulligan" }
   | { type: "keep-hand" }
@@ -138,10 +194,39 @@ function without(arr: PlayCard[], id: string): PlayCard[] {
   return arr.filter((c) => c.instanceId !== id);
 }
 
+function canMoveToZone(card: PlayCard, zone: Zone): boolean {
+  return zone !== "command" || card.isCommander === true;
+}
+
+function normalizeCounter(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function sameTokenTemplate(a: PlayTokenTemplate, b: PlayTokenTemplate): boolean {
+  return (
+    a.name === b.name &&
+    (a.typeLine ?? "") === (b.typeLine ?? "") &&
+    (a.tokenNote ?? "") === (b.tokenNote ?? "")
+  );
+}
+
+function rememberRecentToken(
+  recentTokens: PlayTokenTemplate[],
+  token: PlayTokenTemplate
+): PlayTokenTemplate[] {
+  return [
+    token,
+    ...recentTokens.filter((existing) => !sameTokenTemplate(existing, token)),
+  ].slice(0, RECENT_TOKEN_LIMIT);
+}
+
 function reducer(state: PlayState, action: Action): PlayState {
   switch (action.type) {
-    case "new-game":
-      return initialState(action.deck, action.life ?? state.life);
+    case "new-game": {
+      const mode = action.mode ?? state.mode;
+      return initialState(action.deck, mode, action.life ?? startingLife(mode));
+    }
 
     case "shuffle":
       return { ...state, library: shuffle(state.library) };
@@ -160,6 +245,7 @@ function reducer(state: PlayState, action: Action): PlayState {
     case "move": {
       const card = findIn(state, action.from, action.instanceId);
       if (!card) return state;
+      if (!canMoveToZone(card, action.to)) return state;
       const next: PlayState = {
         ...state,
         [action.from]: without(state[action.from], action.instanceId),
@@ -222,13 +308,21 @@ function reducer(state: PlayState, action: Action): PlayState {
         counters: {},
         isToken: true,
       };
-      return { ...state, battlefield: [...state.battlefield, token] };
+      return {
+        ...state,
+        battlefield: [...state.battlefield, token],
+        recentTokens: rememberRecentToken(state.recentTokens, action.token),
+      };
     }
 
     case "life":
       return { ...state, life: state.life + action.delta };
     case "set-life":
       return { ...state, life: action.value };
+    case "poison":
+      return { ...state, poison: normalizeCounter(state.poison + action.delta) };
+    case "set-poison":
+      return { ...state, poison: normalizeCounter(action.value) };
 
     case "end-turn":
       return {
@@ -304,6 +398,7 @@ function reducer(state: PlayState, action: Action): PlayState {
         (c) => c.instanceId === action.instanceId
       );
       if (!card) return state;
+      if (!canMoveToZone(card, state.search.dest)) return state;
       const remaining = without(state.library, action.instanceId);
       const next: PlayState = {
         ...state,
@@ -323,15 +418,16 @@ function reducer(state: PlayState, action: Action): PlayState {
   }
 }
 
-export function usePlaytest(deck: Deck, startingLife = 20) {
+export function usePlaytest(deck: Deck, startingMode: PlayMode = "normal") {
   const [state, dispatch] = useReducer(
     reducer,
     undefined,
-    () => initialState(deck, startingLife)
+    () => initialState(deck, startingMode)
   );
 
   const newGame = useCallback(
-    (life?: number) => dispatch({ type: "new-game", deck, life }),
+    (mode?: PlayMode, life?: number) =>
+      dispatch({ type: "new-game", deck, mode, life }),
     [deck]
   );
   const shuffleLib = useCallback(() => dispatch({ type: "shuffle" }), []);
@@ -360,8 +456,7 @@ export function usePlaytest(deck: Deck, startingLife = 20) {
     []
   );
   const addToken = useCallback(
-    (token: { name: string; typeLine?: string; tokenNote?: string }) =>
-      dispatch({ type: "add-token", token }),
+    (token: PlayTokenTemplate) => dispatch({ type: "add-token", token }),
     []
   );
   const lifeDelta = useCallback(
@@ -370,6 +465,14 @@ export function usePlaytest(deck: Deck, startingLife = 20) {
   );
   const setLife = useCallback(
     (value: number) => dispatch({ type: "set-life", value }),
+    []
+  );
+  const poisonDelta = useCallback(
+    (delta: number) => dispatch({ type: "poison", delta }),
+    []
+  );
+  const setPoison = useCallback(
+    (value: number) => dispatch({ type: "set-poison", value }),
     []
   );
   const endTurn = useCallback(() => dispatch({ type: "end-turn" }), []);
@@ -428,6 +531,8 @@ export function usePlaytest(deck: Deck, startingLife = 20) {
     addToken,
     lifeDelta,
     setLife,
+    poisonDelta,
+    setPoison,
     endTurn,
     mulligan,
     keepHand,

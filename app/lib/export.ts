@@ -74,14 +74,22 @@ function sortedEntries(entries: DeckEntry[]): DeckEntry[] {
   return [...entries].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function toTextLines(entries: DeckEntry[]): string {
+function toQuantityNameLines(entries: DeckEntry[]): string {
   return sortedEntries(entries)
     .map((e) => `${e.quantity} ${e.name}`)
     .join("\n");
 }
 
-function toMtgaLines(entries: DeckEntry[]): string {
-  const body = sortedEntries(entries)
+function toTextLines(deck: Deck): string {
+  const main = toQuantityNameLines(deck.entries);
+  if (deck.sideboard.length === 0) return main;
+  return [main, "Sideboard", toQuantityNameLines(deck.sideboard)]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function toMtgaBody(entries: DeckEntry[]): string {
+  return sortedEntries(entries)
     .map((e) => {
       const set = e.set?.toUpperCase();
       if (set && e.collectorNumber) {
@@ -90,15 +98,30 @@ function toMtgaLines(entries: DeckEntry[]): string {
       return `${e.quantity} ${e.name}`;
     })
     .join("\n");
-  return `Deck\n${body}`;
 }
 
-function toMwsLines(entries: DeckEntry[]): string {
+function toMtgaLines(deck: Deck): string {
+  const body = [`Deck`, toMtgaBody(deck.entries)];
+  if (deck.sideboard.length > 0) {
+    body.push(`Sideboard`, toMtgaBody(deck.sideboard));
+  }
+  return body.filter(Boolean).join("\n");
+}
+
+function toMwsSection(entries: DeckEntry[]): string {
   return sortedEntries(entries)
     .map((e) => {
       const set = e.set ? e.set.toUpperCase() : "   ";
       return `    ${e.quantity} [${set}] ${e.name}`;
     })
+    .join("\n");
+}
+
+function toMwsLines(deck: Deck): string {
+  const main = toMwsSection(deck.entries);
+  if (deck.sideboard.length === 0) return main;
+  return [main, "Sideboard", toMwsSection(deck.sideboard)]
+    .filter(Boolean)
     .join("\n");
 }
 
@@ -123,36 +146,63 @@ function toMtgoDek(deck: Deck): string {
       `  <Cards CatID="0" Quantity="${e.quantity}" Sideboard="false" Name="${xmlEscape(e.name)}" />`
     );
   }
+  for (const e of sortedEntries(deck.sideboard)) {
+    lines.push(
+      `  <Cards CatID="0" Quantity="${e.quantity}" Sideboard="true" Name="${xmlEscape(e.name)}" />`
+    );
+  }
   lines.push("</Deck>");
   return lines.join("\n");
 }
 
-function toCsv(entries: DeckEntry[]): string {
+function toCsv(deck: Deck): string {
   const esc = (v: string | number | undefined) => {
     const s = v === undefined ? "" : String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const header = "Quantity,Name,Set,CollectorNumber,ManaCost,Type";
-  const rows = sortedEntries(entries).map((e) =>
+  const header = "Board,Quantity,Name,Set,CollectorNumber,ManaCost,Type";
+  const rowFor = (board: string, e: DeckEntry) =>
     [
+      board,
       e.quantity,
       esc(e.name),
       esc(e.set?.toUpperCase()),
       esc(e.collectorNumber),
       esc(e.manaCost),
       esc(e.typeLine),
-    ].join(",")
-  );
+    ].join(",");
+  const rows = [
+    ...sortedEntries(deck.entries).map((entry) => rowFor("Main", entry)),
+    ...sortedEntries(deck.sideboard).map((entry) =>
+      rowFor("Sideboard", entry)
+    ),
+  ];
   return [header, ...rows].join("\n");
 }
 
-async function toFullCardJson(deck: Deck): Promise<string> {
-  const entries = sortedEntries(deck.entries);
+function compactEntry(entry: DeckEntry) {
+  return {
+    name: entry.name,
+    quantity: entry.quantity,
+    isCommander: entry.isCommander === true,
+    set: entry.set,
+    collectorNumber: entry.collectorNumber,
+    manaCost: entry.manaCost,
+    cmc: entry.cmc,
+    typeLine: entry.typeLine,
+    colors: entry.colors,
+    rarity: entry.rarity,
+  };
+}
+
+async function entriesWithFullCards(entries: DeckEntry[]) {
+  const sorted = sortedEntries(entries);
+  if (sorted.length === 0) return [];
   const cards = await getCardsByIdentifiers(
-    entries.map((entry) => ({ id: entry.cardId }))
+    sorted.map((entry) => ({ id: entry.cardId }))
   );
   const cardsById = new Map(cards.map((card) => [card.id, card]));
-  const missing = entries.filter((entry) => !cardsById.has(entry.cardId));
+  const missing = sorted.filter((entry) => !cardsById.has(entry.cardId));
 
   if (missing.length > 0) {
     const names = missing
@@ -167,17 +217,29 @@ async function toFullCardJson(deck: Deck): Promise<string> {
     );
   }
 
+  return sorted.map((entry) => ({
+    number: entry.quantity,
+    isCommander: entry.isCommander === true,
+    card: cardsById.get(entry.cardId)!,
+  }));
+}
+
+async function toFullCardJson(deck: Deck): Promise<string> {
+  const [entries, sideboard] = await Promise.all([
+    entriesWithFullCards(deck.entries),
+    entriesWithFullCards(deck.sideboard),
+  ]);
+
   return JSON.stringify(
     {
       name: deck.name,
       format: deck.format,
       cardCount: deck.cardCount,
+      sideboardCount: deck.sideboardCount,
       createdAt: deck.createdAt,
       updatedAt: deck.updatedAt,
-      entries: entries.map((entry) => ({
-        number: entry.quantity,
-        card: cardsById.get(entry.cardId)!,
-      })),
+      entries,
+      sideboard,
     },
     null,
     2
@@ -187,32 +249,26 @@ async function toFullCardJson(deck: Deck): Promise<string> {
 export function serializeDeck(deck: Deck, format: ExportFormat): string {
   switch (format) {
     case "text":
-      return toTextLines(deck.entries);
+      return toTextLines(deck);
     case "mtga":
-      return toMtgaLines(deck.entries);
+      return toMtgaLines(deck);
     case "mtgo":
       return toMtgoDek(deck);
     case "mws":
-      return toMwsLines(deck.entries);
+      return toMwsLines(deck);
     case "csv":
-      return toCsv(deck.entries);
+      return toCsv(deck);
     case "json":
       return JSON.stringify(
         {
           name: deck.name,
           format: deck.format,
+          cardCount: deck.cardCount,
+          sideboardCount: deck.sideboardCount,
           createdAt: deck.createdAt,
           updatedAt: deck.updatedAt,
-          entries: deck.entries.map((e) => ({
-            name: e.name,
-            quantity: e.quantity,
-            set: e.set,
-            collectorNumber: e.collectorNumber,
-            manaCost: e.manaCost,
-            cmc: e.cmc,
-            typeLine: e.typeLine,
-            colors: e.colors,
-          })),
+          entries: deck.entries.map(compactEntry),
+          sideboard: deck.sideboard.map(compactEntry),
         },
         null,
         2

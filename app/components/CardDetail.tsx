@@ -10,9 +10,12 @@ type Props = {
   onBack: () => void;
   deckQuantity: number;
   onDeckQuantityChange: (card: ScryfallCard, quantity: number) => void;
+  isCommander?: boolean;
+  onCommanderChange?: (card: ScryfallCard, isCommander: boolean) => void;
   onToggleSimilaritySeed?: (card: ScryfallCard) => void;
   isSimilaritySeed?: boolean;
   similaritySeedDisabled?: boolean;
+  offlineActive?: boolean;
 };
 
 export function CardDetail({
@@ -20,20 +23,27 @@ export function CardDetail({
   onBack,
   deckQuantity,
   onDeckQuantityChange,
+  isCommander = false,
+  onCommanderChange,
   onToggleSimilaritySeed,
   isSimilaritySeed = false,
   similaritySeedDisabled = false,
+  offlineActive = false,
 }: Props) {
   const [face, setFace] = useState(0);
 
   const hasFaces = (card.card_faces?.length ?? 0) >= 2;
   const activeFace = hasFaces ? card.card_faces![face] : undefined;
 
-  const img = hasFaces
-    ? activeFace?.image_uris?.large ??
-      activeFace?.image_uris?.normal ??
-      getCardImage(card, "large")
-    : getCardImage(card, "large") ?? getCardImage(card, "normal");
+  const img = offlineActive
+    ? hasFaces
+      ? activeFace?.image_uris?.small ?? getCardImage(card, "small")
+      : getCardImage(card, "small")
+    : hasFaces
+      ? activeFace?.image_uris?.large ??
+        activeFace?.image_uris?.normal ??
+        getCardImage(card, "large")
+      : getCardImage(card, "large") ?? getCardImage(card, "normal");
 
   const name = activeFace?.name ?? card.name;
   const mana = activeFace?.mana_cost ?? card.mana_cost;
@@ -149,10 +159,10 @@ export function CardDetail({
               </div>
             </section>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 {power && toughness && (
-                  <span className="flex h-10 items-center rounded-lg border border-border bg-white/78 px-3 text-xs text-text-muted shadow-sm">
+                  <span className="flex h-9 items-center rounded-md border border-border bg-white/78 px-2.5 text-xs text-text-muted shadow-sm">
                     <span className="font-semibold text-text">P/T:</span>
                     <span className="ml-1 tabular-nums">
                       {power}/{toughness}
@@ -160,72 +170,87 @@ export function CardDetail({
                   </span>
                 )}
                 {loyalty && (
-                  <span className="flex h-10 items-center rounded-lg border border-border bg-white/78 px-3 text-xs text-text-muted shadow-sm">
+                  <span className="flex h-9 items-center rounded-md border border-border bg-white/78 px-2.5 text-xs text-text-muted shadow-sm">
                     <span className="font-semibold text-text">Loyalty:</span>
                     <span className="ml-1 tabular-nums">{loyalty}</span>
                   </span>
                 )}
               </div>
-              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-text-muted">
-                    In deck
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
+                <div className="flex h-9 items-center rounded-md border border-border bg-white/86 shadow-sm">
+                  <span className="border-r border-border px-2.5 text-[11px] font-semibold uppercase text-text-subtle">
+                    Deck
                   </span>
-                  <div className="flex h-10 items-center gap-1 rounded-full border border-border bg-white/86 px-1 shadow-sm">
-                    <button
-                      onClick={() =>
-                        onDeckQuantityChange(
-                          card,
-                          Math.max(0, deckQuantity - 1)
-                        )
-                      }
-                      className="deck-action-button"
-                      aria-label={`Remove one ${name} from deck`}
-                      title="Remove one"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      min={0}
-                      max={255}
-                      value={deckQuantity}
-                      onChange={(e) =>
-                        onDeckQuantityChange(
-                          card,
-                          Math.min(
-                            255,
-                            Math.max(0, Number(e.target.value) || 0)
-                          )
-                        )
-                      }
-                      className="quantity-input h-8 w-14 rounded-full border border-border bg-white/80 text-sm font-semibold text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
-                    />
-                    <button
-                      onClick={() =>
-                        onDeckQuantityChange(
-                          card,
-                          Math.min(255, deckQuantity + 1)
-                        )
-                      }
-                      className="deck-action-button"
-                      aria-label={`Add one ${name} to deck`}
-                      title="Add one"
-                    >
-                      +
-                    </button>
-                  </div>
+                  <button
+                    onClick={() =>
+                      onDeckQuantityChange(card, Math.max(0, deckQuantity - 1))
+                    }
+                    className="flex h-8 w-8 items-center justify-center text-base font-semibold text-text-muted transition hover:bg-surface-subtle hover:text-text"
+                    aria-label={`Remove one ${name} from deck`}
+                    title="Remove one"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    min={0}
+                    max={255}
+                    value={deckQuantity}
+                    onChange={(e) =>
+                      onDeckQuantityChange(
+                        card,
+                        Math.min(255, Math.max(0, Number(e.target.value) || 0))
+                      )
+                    }
+                    className="quantity-input h-8 w-12 border-x border-border bg-white/80 text-sm font-semibold text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  />
+                  <button
+                    onClick={() =>
+                      onDeckQuantityChange(
+                        card,
+                        Math.min(255, deckQuantity + 1)
+                      )
+                    }
+                    className="flex h-8 w-8 items-center justify-center text-base font-semibold text-text-muted transition hover:bg-surface-subtle hover:text-text"
+                    aria-label={`Add one ${name} to deck`}
+                    title="Add one"
+                  >
+                    +
+                  </button>
                 </div>
+                {onCommanderChange && (
+                  <button
+                    onClick={() => onCommanderChange(card, !isCommander)}
+                    disabled={deckQuantity === 0}
+                    aria-pressed={isCommander}
+                    title={
+                      deckQuantity === 0
+                        ? "Add this card to the deck before making it commander"
+                        : isCommander
+                          ? "Remove commander tag"
+                          : "Make this card the commander"
+                    }
+                    className={`h-9 rounded-md border px-3 text-xs font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      isCommander
+                        ? "border-accent bg-accent text-white"
+                        : "border-border bg-white/86 text-text-muted hover:border-accent hover:text-text"
+                    }`}
+                  >
+                    {isCommander ? "Commander" : "Set commander"}
+                  </button>
+                )}
                 {onToggleSimilaritySeed && (
                   <button
                     onClick={() => onToggleSimilaritySeed(card)}
                     disabled={similaritySeedDisabled}
-                    className={`h-10 rounded-lg border bg-[image:var(--rainbow-soft)] px-4 text-sm font-medium text-text shadow-sm transition hover:border-accent hover:bg-white disabled:cursor-not-allowed disabled:opacity-40 ${
-                      isSimilaritySeed ? "border-accent" : "border-border"
+                    className={`h-9 rounded-md border px-3 text-xs font-semibold shadow-sm transition hover:border-accent disabled:cursor-not-allowed disabled:opacity-40 ${
+                      isSimilaritySeed
+                        ? "border-accent bg-accent-subtle text-accent"
+                        : "border-border bg-white/86 text-text-muted hover:text-text"
                     }`}
                   >
                     {isSimilaritySeed
-                      ? "Remove from search"
+                      ? "Search seed"
                       : "Add to search"}
                   </button>
                 )}

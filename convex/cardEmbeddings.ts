@@ -6,6 +6,7 @@ import type { Id } from "./_generated/dataModel";
 
 const MAX_SEED_CARDS = 8;
 const DEFAULT_LIMIT = 32;
+const MAX_LIMIT = 256;
 const VECTOR_LIMIT = 256;
 const MAX_VECTOR_FILTER_CONDITIONS = 64;
 const EMBEDDING_DIMENSIONS = 4096;
@@ -69,7 +70,6 @@ export const similarCards = action({
         oracle_id: seed.oracleId,
         similarity: 1,
       }));
-    if (args.candidateOracleIds && seedMatches.length === 0) return [];
 
     const queryVector = normalize(sumVectors(seeds.map((seed) => seed.embedding)));
     if (queryVector.length === 0) return seedMatches;
@@ -196,7 +196,6 @@ export const hybridCards = action({
         oracle_id: seed.oracleId,
         similarity: 1,
       }));
-    if (!query && args.candidateOracleIds && seedMatches.length === 0) return [];
 
     const queryVector = normalize(sumVectors(vectors));
     const limit = clampLimit(args.limit ?? DEFAULT_LIMIT);
@@ -299,7 +298,7 @@ function uniqueOracleIds(oracleIds: string[]): string[] {
 
 function clampLimit(limit: number): number {
   if (!Number.isFinite(limit)) return DEFAULT_LIMIT;
-  return Math.max(1, Math.min(DEFAULT_LIMIT, Math.floor(limit)));
+  return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit)));
 }
 
 function chunk<T>(items: T[], size: number): T[][] {

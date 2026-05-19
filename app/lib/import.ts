@@ -2,15 +2,20 @@ import type { DeckEntry } from "./types";
 import { cardToEntry } from "./decks";
 import { getCardsByIdentifiers, type CollectionIdentifier } from "./scryfall";
 
+export type DeckZone = "main" | "sideboard";
+
 export type ParsedLine = {
   quantity: number;
   name: string;
   set?: string;
   collectorNumber?: string;
+  isCommander?: boolean;
+  zone?: DeckZone;
 };
 
 export type ImportResult = {
   entries: DeckEntry[];
+  sideboard: DeckEntry[];
   unresolved: ParsedLine[];
   deckName?: string;
 };
@@ -39,13 +44,21 @@ function frontFaceName(name: string): string {
   return (idx >= 0 ? name.slice(0, idx) : name).trim();
 }
 
+function zoneForSection(section: string | null): DeckZone {
+  return section === "sideboard" ? "sideboard" : "main";
+}
+
 export function parseDeckText(text: string): ParsedLine[] {
   const out: ParsedLine[] = [];
+  let section: string | null = null;
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
     if (line.startsWith("//") || line.startsWith("#")) continue;
-    if (SECTION_HEADERS.has(line.toLowerCase())) continue;
+    if (SECTION_HEADERS.has(line.toLowerCase())) {
+      section = line.toLowerCase();
+      continue;
+    }
 
     const mws = MWS_RE.exec(line);
     if (mws) {
@@ -54,6 +67,8 @@ export function parseDeckText(text: string): ParsedLine[] {
         quantity: Number(mws[1]),
         name: frontFaceName(mws[3]),
         set: set && set !== "   " ? set.toLowerCase() : undefined,
+        isCommander: section === "commander",
+        zone: zoneForSection(section),
       });
       continue;
     }
@@ -65,25 +80,36 @@ export function parseDeckText(text: string): ParsedLine[] {
         name: frontFaceName(m[2]),
         set: m[3]?.toLowerCase(),
         collectorNumber: m[4],
+        isCommander: section === "commander",
+        zone: zoneForSection(section),
       });
       continue;
     }
     // Bare card name (no leading count) — treat as qty 1
     if (/^[A-Za-z][^|\t]{1,}/.test(line) && !/^\d/.test(line)) {
-      out.push({ quantity: 1, name: frontFaceName(line) });
+      out.push({
+        quantity: 1,
+        name: frontFaceName(line),
+        isCommander: section === "commander",
+        zone: zoneForSection(section),
+      });
     }
   }
   return out;
 }
 
+type JsonDeckEntryShape = {
+  name: string;
+  quantity?: number;
+  set?: string;
+  collectorNumber?: string;
+  isCommander?: boolean;
+};
+
 type JsonDeckShape = {
   name?: string;
-  entries?: Array<{
-    name: string;
-    quantity?: number;
-    set?: string;
-    collectorNumber?: string;
-  }>;
+  entries?: JsonDeckEntryShape[];
+  sideboard?: JsonDeckEntryShape[];
 };
 
 export function parseDeckInput(
@@ -93,17 +119,27 @@ export function parseDeckInput(
   if (trimmed.startsWith("{")) {
     try {
       const obj = JSON.parse(trimmed) as JsonDeckShape;
-      if (Array.isArray(obj.entries)) {
-        return {
-          deckName: obj.name,
-          lines: obj.entries
+      if (Array.isArray(obj.entries) || Array.isArray(obj.sideboard)) {
+        const toLines = (
+          entries: JsonDeckEntryShape[] | undefined,
+          zone: DeckZone
+        ): ParsedLine[] =>
+          (entries ?? [])
             .filter((e) => e && typeof e.name === "string")
             .map((e) => ({
               quantity: Math.max(1, Number(e.quantity) || 1),
               name: frontFaceName(e.name),
               set: e.set?.toLowerCase(),
               collectorNumber: e.collectorNumber,
-            })),
+              isCommander: zone === "main" && e.isCommander === true,
+              zone,
+            }));
+        return {
+          deckName: obj.name,
+          lines: [
+            ...toLines(obj.entries, "main"),
+            ...toLines(obj.sideboard, "sideboard"),
+          ],
         };
       }
     } catch {
@@ -116,7 +152,9 @@ export function parseDeckInput(
 export async function resolveLines(
   lines: ParsedLine[]
 ): Promise<ImportResult> {
-  if (lines.length === 0) return { entries: [], unresolved: [] };
+  if (lines.length === 0) {
+    return { entries: [], sideboard: [], unresolved: [] };
+  }
 
   const identifiers: CollectionIdentifier[] = lines.map((l) => {
     if (l.set && l.collectorNumber) {
@@ -140,6 +178,7 @@ export async function resolveLines(
   }
 
   const entries: DeckEntry[] = [];
+  const sideboard: DeckEntry[] = [];
   const unresolved: ParsedLine[] = [];
   for (const l of lines) {
     const card = byName.get(l.name.toLowerCase());
@@ -147,12 +186,16 @@ export async function resolveLines(
       unresolved.push(l);
       continue;
     }
-    const existing = entries.find((e) => e.cardId === card.id);
+    const target = l.zone === "sideboard" ? sideboard : entries;
+    const existing = target.find((e) => e.cardId === card.id);
     if (existing) {
       existing.quantity += l.quantity;
+      if (l.zone !== "sideboard") existing.isCommander ||= l.isCommander;
     } else {
-      entries.push(cardToEntry(card, l.quantity));
+      const entry = cardToEntry(card, l.quantity);
+      if (l.zone !== "sideboard" && l.isCommander) entry.isCommander = true;
+      target.push(entry);
     }
   }
-  return { entries, unresolved };
+  return { entries, sideboard, unresolved };
 }

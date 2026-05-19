@@ -15,9 +15,11 @@ import { ExportButton } from "./components/ExportButton";
 import { ImportButton } from "./components/ImportButton";
 import { AuthButton } from "./components/AuthButton";
 import { AppIcon } from "./components/AppIcon";
+import { SettingsButton } from "./components/SettingsButton";
 import type { ScryfallCard } from "./lib/types";
 import { oracleIdForCard } from "./lib/cardIdentity";
 import { getCardById } from "./lib/scryfall";
+import { getOfflineCardById, resolveLinesOffline, useOfflineMode } from "./lib/offline";
 
 type HoverState = {
   src?: string;
@@ -27,7 +29,14 @@ type HoverState = {
 };
 
 export default function Home() {
-  const decks = useDecks();
+  const offline = useOfflineMode();
+  const decks = useDecks({
+    offlineEnabled: offline.settings.enabled,
+    offlineActive: offline.offlineActive,
+    online: offline.online,
+    onOfflineSyncingChange: offline.setSyncing,
+    onPendingDeckChangesChange: offline.refreshPendingDeckChanges,
+  });
   const [hover, setHover] = useState<HoverState | null>(null);
   const [selected, setSelected] = useState<ScryfallCard | null>(null);
   const [semanticRules, setSemanticRules] = useState(false);
@@ -76,19 +85,21 @@ export default function Home() {
 
   const handleDeckCardClick = useCallback(async (cardId: string) => {
     try {
-      const card = await getCardById(cardId);
+      const card = offline.offlineActive
+        ? await getOfflineCardById(cardId)
+        : await getCardById(cardId);
       if (card) setSelected(card);
     } catch {
       // ignore — deck tile remains clickable but we silently fail the fetch
     }
-  }, []);
+  }, [offline.offlineActive]);
 
-  const activeIdForPrices = decks.activeId;
-  const refreshPricesFn = decks.refreshPrices;
-  const handleRefreshPrices = useCallback(() => {
-    if (!activeIdForPrices) return;
-    refreshPricesFn(activeIdForPrices);
-  }, [activeIdForPrices, refreshPricesFn]);
+  const activeIdForCardData = decks.activeId;
+  const refreshCardDataFn = decks.refreshCardData;
+  const handleRefreshCardData = useCallback(() => {
+    if (!activeIdForCardData) return;
+    refreshCardDataFn(activeIdForCardData);
+  }, [activeIdForCardData, refreshCardDataFn]);
 
   const handleToggleSimilaritySeed = useCallback((card: ScryfallCard) => {
     const oracleId = oracleIdForCard(card);
@@ -162,6 +173,14 @@ export default function Home() {
     [active, decks]
   );
 
+  const handleCommanderChange = useCallback(
+    (card: ScryfallCard, isCommander: boolean) => {
+      if (!active) return;
+      decks.setCommander(active.id, isCommander ? card.id : null);
+    },
+    [active, decks]
+  );
+
   if (!decks.hydrated) {
     return (
       <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-8 text-sm text-text-subtle">
@@ -195,6 +214,8 @@ export default function Home() {
 
   const activeCardCount =
     active?.entries.reduce((n, entry) => n + entry.quantity, 0) ?? 0;
+  const activeSideboardCount =
+    active?.sideboard.reduce((n, entry) => n + entry.quantity, 0) ?? 0;
   const selectedOracleId = selected ? oracleIdForCard(selected) : undefined;
   const selectedIsSimilaritySeed =
     selectedOracleId !== undefined &&
@@ -207,110 +228,98 @@ export default function Home() {
     ? active?.entries.find((entry) => entry.cardId === selected.id)
     : undefined;
   const selectedDeckQuantity = selectedDeckEntry?.quantity ?? 0;
+  const selectedIsCommander = selectedDeckEntry?.isCommander === true;
 
   return (
     <div className="app-shell-bg flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header className="app-header flex shrink-0 flex-wrap items-center justify-between gap-3 px-3 py-2.5 sm:px-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="hidden items-center gap-2 pr-1 sm:flex">
-            <AppIcon size={34} className="shadow-sm ring-1 ring-white/80" />
-            <div className="leading-tight">
-              <div className="text-sm font-semibold text-text">
-                magicaldeckgatherer
+      <header className="app-header shrink-0 px-3 py-3 sm:px-4">
+        <div className="flex w-full min-w-0 flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-center">
+            <button
+              onClick={() => setSelectorOpen(true)}
+              className="header-brand-button shrink-0"
+              aria-label="Open deck list"
+              title="Your decks"
+            >
+              <AppIcon size={34} className="shadow-sm ring-1 ring-border/70" />
+              <div className="leading-tight">
+                <div className="text-sm font-semibold tracking-normal text-text">
+                  magicaldeckgatherer
+                </div>
+                <div className="text-[11px] font-medium text-text-subtle">
+                  MTG deck workspace
+                </div>
               </div>
-              <div className="text-[11px] text-text-subtle">MTG builder</div>
+            </button>
+
+            <div className="hidden h-8 w-px bg-border md:block" />
+
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+              {active ? (
+                <>
+                  <DeckNameEditor
+                    key={active.id}
+                    name={active.name}
+                    onRename={(n) => decks.renameDeck(active.id, n)}
+                  />
+                  <span className="header-meta-pill">
+                    <span className="tabular-nums">{activeCardCount}</span>
+                    <span>cards</span>
+                  </span>
+                  <span className="header-meta-pill">
+                    <span className="tabular-nums">{activeSideboardCount}</span>
+                    <span>sideboard</span>
+                  </span>
+                  <ClearDeckButton
+                    disabled={
+                      active.entries.length === 0 &&
+                      active.sideboard.length === 0
+                    }
+                    onClear={() => decks.clearDeck(active.id)}
+                  />
+                </>
+              ) : (
+                <span className="ml-1 text-sm text-text-subtle">
+                  No active deck
+                </span>
+              )}
             </div>
           </div>
-          <button
-            onClick={() => setSelectorOpen(true)}
-            className="control flex h-9 shrink-0 items-center gap-2 px-3 text-sm"
-            aria-label="Open deck list"
-            title="Your decks"
-          >
-            <MenuIcon />
-            <span className="hidden sm:inline">Decks</span>
-            <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] tabular-nums text-text-subtle shadow-sm ring-1 ring-border/70">
-              {decks.decks.length}
-            </span>
-          </button>
-          {active ? (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-              <DeckNameEditor
-                key={active.id}
-                name={active.name}
-                onRename={(n) => decks.renameDeck(active.id, n)}
-              />
-              <span className="rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium tabular-nums text-text-muted">
-                {activeCardCount} cards
-              </span>
-              <select
-                value={active.format}
-                onChange={(e) => decks.setFormat(active.id, e.target.value)}
-                className="control px-2.5 py-1.5 text-xs capitalize"
-                aria-label="Deck format"
-              >
-                <option value="commander">Commander</option>
-                <option value="standard">Standard</option>
-                <option value="pioneer">Pioneer</option>
-                <option value="modern">Modern</option>
-                <option value="legacy">Legacy</option>
-                <option value="vintage">Vintage</option>
-                <option value="pauper">Pauper</option>
-                <option value="casual">Casual</option>
-              </select>
-              <ClearDeckButton
-                disabled={active.entries.length === 0}
-                onClear={() => decks.clearDeck(active.id)}
-              />
-            </div>
-          ) : (
-            <span className="ml-1 text-sm text-text-subtle">No active deck</span>
-          )}
-        </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          <AuthButton />
-          {active && (
-            <ImportButton
-              onImport={(entries, mode) =>
-                decks.importEntries(active.id, entries, mode)
-              }
-              onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
-            />
-          )}
-          {active && (
-            <ExportButton
-              deck={active}
-              disabled={active.entries.length === 0}
-            />
-          )}
-          {active && active.entries.length > 0 && (
-            <Link
-              href={`/play/?deck=${encodeURIComponent(active.id)}`}
-              className="control-primary mr-1 flex h-9 items-center px-3 text-xs font-semibold"
-              title="Playtest this deck"
-            >
-              Playtest
-            </Link>
-          )}
-          <button
-            onClick={handleUndo}
-            disabled={!canUndo}
-            title="Undo (⌘Z)"
-            aria-label="Undo"
-            className="control p-2 disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
-          >
-            <UndoIcon />
-          </button>
-          <button
-            onClick={handleRedo}
-            disabled={!canRedo}
-            title="Redo (⌘⇧Z)"
-            aria-label="Redo"
-            className="control p-2 disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
-          >
-            <RedoIcon />
-          </button>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5 md:justify-end">
+            {active && (
+              <ImportButton
+                onImport={(entries, sideboard, mode) =>
+                  decks.importEntries(active.id, entries, sideboard, mode)
+                }
+                onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
+                resolveLines={offline.offlineActive ? resolveLinesOffline : undefined}
+              />
+            )}
+            {active && (
+              <ExportButton
+                deck={active}
+                disabled={
+                  active.entries.length === 0 &&
+                  active.sideboard.length === 0
+                }
+              />
+            )}
+            {active && active.entries.length > 0 && (
+              <Link
+                href={`/play/?deck=${encodeURIComponent(active.id)}`}
+                className="control-primary"
+                title="Playtest this deck"
+              >
+                Playtest
+              </Link>
+            )}
+            {active && (
+              <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
+            )}
+            <SettingsButton offline={offline} />
+            <AuthButton />
+          </div>
         </div>
       </header>
 
@@ -352,6 +361,8 @@ export default function Home() {
             previewCardId={selected?.id ?? null}
             semanticRules={semanticRules}
             onSemanticRulesChange={setSemanticRules}
+            offlineActive={offline.offlineActive}
+            offlineReady={offline.cacheReady}
             similaritySeeds={similaritySeeds}
             onRemoveSimilaritySeed={handleRemoveSimilaritySeed}
             onSelect={(card) => setSelected(card)}
@@ -383,9 +394,12 @@ export default function Home() {
                 onBack={() => setSelected(null)}
                 deckQuantity={selectedDeckQuantity}
                 onDeckQuantityChange={handlePreviewDeckQuantityChange}
+                isCommander={selectedIsCommander}
+                onCommanderChange={handleCommanderChange}
                 onToggleSimilaritySeed={handleToggleSimilaritySeed}
                 isSimilaritySeed={selectedIsSimilaritySeed}
                 similaritySeedDisabled={similaritySeedDisabled}
+                offlineActive={offline.offlineActive}
               />
             ) : (
               <PreviewPlaceholder />
@@ -399,9 +413,18 @@ export default function Home() {
                 onSetQty={(cardId, qty) =>
                   decks.setQuantity(active.id, cardId, qty)
                 }
+                onSetSideboardQty={(cardId, qty) =>
+                  decks.setQuantity(active.id, cardId, qty, "sideboard")
+                }
+                onMoveCard={(cardId, to) =>
+                  decks.moveCard(active.id, cardId, to)
+                }
+                onSetCommander={(cardId, isCommander) =>
+                  decks.setCommander(active.id, isCommander ? cardId : null)
+                }
                 onHover={(h) => setHover(h)}
                 onSelect={handleDeckCardClick}
-                onRefreshPrices={handleRefreshPrices}
+                onRefreshCardData={handleRefreshCardData}
               />
             ) : (
               <div className="flex h-full items-center justify-center bg-surface p-8 text-sm text-text-subtle">
@@ -454,7 +477,7 @@ function DeckNameEditor({
         }
       }}
       aria-label="Deck name"
-      className="min-w-0 flex-1 rounded-lg border border-transparent bg-white/0 px-2 py-1.5 text-base font-semibold outline-none transition hover:border-border hover:bg-white/60 focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/20"
+      className="min-w-48 flex-1 rounded-md border border-transparent bg-transparent px-2 text-sm font-semibold outline-none transition hover:border-border hover:bg-white focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/15"
     />
   );
 }
@@ -546,57 +569,5 @@ function PreviewPlaceholder() {
         </div>
       </div>
     </div>
-  );
-}
-
-function MenuIcon() {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      width={16}
-      height={16}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-    >
-      <path d="M4 6h12M4 10h12M4 14h12" />
-    </svg>
-  );
-}
-
-function UndoIcon() {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      width={16}
-      height={16}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M7 8H14a3 3 0 0 1 0 6H8" />
-      <path d="M10 5L6 8l4 3" />
-    </svg>
-  );
-}
-
-function RedoIcon() {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      width={16}
-      height={16}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M13 8H6a3 3 0 0 0 0 6h6" />
-      <path d="M10 5l4 3-4 3" />
-    </svg>
   );
 }

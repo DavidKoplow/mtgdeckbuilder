@@ -7,17 +7,21 @@ import { ManaCost } from "./ManaCost";
 type Props = {
   deck: Deck;
   onSetQty: (cardId: string, qty: number) => void;
+  onSetSideboardQty: (cardId: string, qty: number) => void;
+  onMoveCard: (cardId: string, to: BoardView) => void;
+  onSetCommander: (cardId: string, isCommander: boolean) => void;
   onHover: (
     payload: { src?: string; x: number; y: number } | null
   ) => void;
   onSelect: (cardId: string) => void;
   /** Scryfall card id — tile/row is highlighted when it matches the preview pane */
   previewCardId?: string | null;
-  onRefreshPrices?: () => void;
+  onRefreshCardData?: () => void;
 };
 
+type BoardView = "main" | "sideboard";
 type ViewMode = "grid" | "list";
-type DeckSortMode = "type" | "mana" | "price";
+type DeckSortMode = "type" | "mana" | "rarity" | "price";
 
 const TYPE_ORDER = [
   "Creature",
@@ -30,6 +34,17 @@ const TYPE_ORDER = [
   "Land",
   "Other",
 ];
+
+const RARITY_ORDER = ["mythic", "rare", "uncommon", "common", "special", "bonus"];
+const RARITY_LABELS: Record<string, string> = {
+  mythic: "Mythic",
+  rare: "Rare",
+  uncommon: "Uncommon",
+  common: "Common",
+  special: "Special",
+  bonus: "Bonus",
+  unknown: "Unknown rarity",
+};
 
 function groupOf(entry: DeckEntry): string {
   const t = entry.typeLine ?? "";
@@ -51,6 +66,11 @@ function compareByName(a: DeckEntry, b: DeckEntry): number {
 function manaBucket(entry: DeckEntry): string {
   const cmc = Math.max(0, Math.round(entry.cmc ?? 0));
   return cmc >= 7 ? "MV 7+" : `MV ${cmc}`;
+}
+
+function rarityBucket(entry: DeckEntry): string {
+  const rarity = entry.rarity?.toLowerCase();
+  return rarity && RARITY_LABELS[rarity] ? rarity : "unknown";
 }
 
 function buildDisplayGroups(
@@ -100,6 +120,27 @@ function buildDisplayGroups(
     });
   }
 
+  if (sortMode === "rarity") {
+    const groups = new Map<string, DeckEntry[]>();
+    for (const entry of entries) {
+      const bucket = rarityBucket(entry);
+      const groupEntries = groups.get(bucket) ?? [];
+      groupEntries.push(entry);
+      groups.set(bucket, groupEntries);
+    }
+
+    for (const groupEntries of groups.values()) {
+      groupEntries.sort(compareByManaThenName);
+    }
+
+    return [...RARITY_ORDER, "unknown"]
+      .filter((rarity) => groups.has(rarity))
+      .map(
+        (rarity) =>
+          [RARITY_LABELS[rarity] ?? rarity, groups.get(rarity)!] as const
+      );
+  }
+
   const priced = entries
     .filter((entry) => typeof entry.priceUsd === "number")
     .slice()
@@ -121,35 +162,54 @@ function buildDisplayGroups(
 export function DeckPanel({
   deck,
   onSetQty,
+  onSetSideboardQty,
+  onMoveCard,
+  onSetCommander,
   onHover,
   onSelect,
   previewCardId = null,
-  onRefreshPrices,
+  onRefreshCardData,
 }: Props) {
+  const [boardView, setBoardView] = useState<BoardView>("main");
   const [view, setView] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<DeckSortMode>("type");
+  const visibleEntries = boardView === "sideboard" ? deck.sideboard : deck.entries;
+  const mainCount = deck.entries.reduce((n, entry) => n + entry.quantity, 0);
+  const sideboardCount = deck.sideboard.reduce(
+    (n, entry) => n + entry.quantity,
+    0
+  );
+  const setVisibleQty =
+    boardView === "sideboard" ? onSetSideboardQty : onSetQty;
+  const moveTarget: BoardView =
+    boardView === "sideboard" ? "main" : "sideboard";
 
-  // Track which card IDs we've already tried to price in this session so we
-  // don't spam Scryfall for cards that genuinely have no listed USD price.
-  const triedPriceRef = useRef<Set<string>>(new Set());
+  // Track which card IDs we've already tried to hydrate in this session so we
+  // don't spam Scryfall for cards that genuinely have no listed metadata.
+  const triedCardDataRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!onRefreshPrices) return;
-    const novel = deck.entries.some(
-      (e) => e.priceUsd === undefined && !triedPriceRef.current.has(e.cardId)
+    if (!onRefreshCardData) return;
+    const allEntries = [...deck.entries, ...deck.sideboard];
+    const novel = allEntries.some(
+      (e) =>
+        (e.priceUsd === undefined || e.rarity === undefined) &&
+        !triedCardDataRef.current.has(e.cardId)
     );
     if (!novel) return;
-    for (const e of deck.entries) {
-      if (e.priceUsd === undefined) triedPriceRef.current.add(e.cardId);
+    for (const e of allEntries) {
+      if (e.priceUsd === undefined || e.rarity === undefined) {
+        triedCardDataRef.current.add(e.cardId);
+      }
     }
-    onRefreshPrices();
-  }, [deck.entries, onRefreshPrices]);
+    onRefreshCardData();
+  }, [deck.entries, deck.sideboard, onRefreshCardData]);
 
   const { groups, totalCount, curve, colorPips, totalPrice, topExpensive, pricedCount } = useMemo(() => {
-    const displayGroups = buildDisplayGroups(deck.entries, sortMode);
-    const totalCount = deck.entries.reduce((n, e) => n + e.quantity, 0);
+    const displayGroups = buildDisplayGroups(visibleEntries, sortMode);
+    const totalCount = visibleEntries.reduce((n, e) => n + e.quantity, 0);
 
     const curveBuckets = [0, 0, 0, 0, 0, 0, 0, 0];
-    for (const e of deck.entries) {
+    for (const e of visibleEntries) {
       if ((e.typeLine ?? "").includes("Land")) continue;
       const cmc = Math.max(0, Math.round(e.cmc ?? 0));
       const idx = Math.min(7, cmc);
@@ -157,7 +217,7 @@ export function DeckPanel({
     }
 
     const colorPips = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
-    for (const e of deck.entries) {
+    for (const e of visibleEntries) {
       const colors = e.colors ?? [];
       if (colors.length === 0) colorPips.C += e.quantity;
       for (const c of colors) {
@@ -167,13 +227,13 @@ export function DeckPanel({
 
     let totalPrice = 0;
     let pricedCount = 0;
-    for (const e of deck.entries) {
+    for (const e of visibleEntries) {
       if (typeof e.priceUsd === "number") {
         totalPrice += e.priceUsd * e.quantity;
         pricedCount += e.quantity;
       }
     }
-    const topExpensive = deck.entries
+    const topExpensive = visibleEntries
       .filter((e) => typeof e.priceUsd === "number")
       .slice()
       .sort((a, b) => (b.priceUsd ?? 0) - (a.priceUsd ?? 0))
@@ -188,15 +248,17 @@ export function DeckPanel({
       topExpensive,
       pricedCount,
     };
-  }, [deck.entries, sortMode]);
+  }, [visibleEntries, sortMode]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="panel-heading flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-3 py-3 text-xs text-text-muted sm:px-4">
         <div className="mr-1">
-          <div className="text-sm font-semibold text-text">Deck</div>
+          <div className="text-sm font-semibold text-text">
+            {boardView === "sideboard" ? "Sideboard" : "Main Deck"}
+          </div>
           <div className="text-xs tabular-nums text-text-subtle">
-            {totalCount} cards
+            {mainCount} main · {sideboardCount} sideboard
           </div>
         </div>
         <div className="flex min-w-[11rem] flex-1 flex-wrap items-center gap-x-4 gap-y-2">
@@ -209,15 +271,16 @@ export function DeckPanel({
             pricedCount={pricedCount}
           />
         </div>
+        <BoardToggle boardView={boardView} onChange={setBoardView} />
         <SortSelect sortMode={sortMode} onChange={setSortMode} />
         <ViewToggle view={view} onChange={setView} />
       </div>
 
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-surface">
-        {deck.entries.length === 0 ? (
+        {visibleEntries.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8 text-center">
             <div className="empty-pill rounded-full px-4 py-2 text-sm text-text-subtle">
-              Empty deck
+              {boardView === "sideboard" ? "Empty sideboard" : "Empty deck"}
             </div>
           </div>
         ) : (
@@ -240,8 +303,13 @@ export function DeckPanel({
                       <DeckTile
                         key={e.cardId}
                         entry={e}
+                        boardView={boardView}
                         highlighted={previewCardId === e.cardId}
-                        onSetQty={(q) => onSetQty(e.cardId, q)}
+                        onSetQty={(q) => setVisibleQty(e.cardId, q)}
+                        onSetCommander={(isCommander) =>
+                          onSetCommander(e.cardId, isCommander)
+                        }
+                        onMove={() => onMoveCard(e.cardId, moveTarget)}
                         onHover={onHover}
                         onSelect={() => onSelect(e.cardId)}
                       />
@@ -253,8 +321,13 @@ export function DeckPanel({
                       <DeckRow
                         key={e.cardId}
                         entry={e}
+                        boardView={boardView}
                         highlighted={previewCardId === e.cardId}
-                        onSetQty={(q) => onSetQty(e.cardId, q)}
+                        onSetQty={(q) => setVisibleQty(e.cardId, q)}
+                        onSetCommander={(isCommander) =>
+                          onSetCommander(e.cardId, isCommander)
+                        }
+                        onMove={() => onMoveCard(e.cardId, moveTarget)}
                         onHover={onHover}
                         onSelect={() => onSelect(e.cardId)}
                       />
@@ -288,9 +361,45 @@ function SortSelect({
       >
         <option value="type">Type</option>
         <option value="mana">Mana value</option>
+        <option value="rarity">Rarity</option>
         <option value="price">Price</option>
       </select>
     </label>
+  );
+}
+
+function BoardToggle({
+  boardView,
+  onChange,
+}: {
+  boardView: BoardView;
+  onChange: (view: BoardView) => void;
+}) {
+  return (
+    <div className="segmented-control flex items-center rounded-lg p-1 text-xs">
+      <button
+        onClick={() => onChange("main")}
+        aria-pressed={boardView === "main"}
+        className={`h-7 rounded-md px-2.5 transition ${
+          boardView === "main"
+            ? "selected-segment font-medium text-text"
+            : "text-text-muted hover:text-text"
+        }`}
+      >
+        Main
+      </button>
+      <button
+        onClick={() => onChange("sideboard")}
+        aria-pressed={boardView === "sideboard"}
+        className={`h-7 rounded-md px-2.5 transition ${
+          boardView === "sideboard"
+            ? "selected-segment font-medium text-text"
+            : "text-text-muted hover:text-text"
+        }`}
+      >
+        Sideboard
+      </button>
+    </div>
   );
 }
 
@@ -333,26 +442,47 @@ function ViewToggle({
 
 function DeckTile({
   entry,
+  boardView,
   highlighted,
   onSetQty,
+  onSetCommander,
+  onMove,
   onHover,
   onSelect,
 }: {
   entry: DeckEntry;
+  boardView: BoardView;
   highlighted?: boolean;
   onSetQty: (q: number) => void;
+  onSetCommander: (isCommander: boolean) => void;
+  onMove: () => void;
   onHover: (p: { src?: string; x: number; y: number } | null) => void;
   onSelect: () => void;
 }) {
+  const isSideboard = boardView === "sideboard";
+  const moveTitle = isSideboard ? "Move to main deck" : "Move to sideboard";
+  const moveLabel = `${moveTitle}: ${entry.name}`;
+  const trashTop = entry.isCommander && !isSideboard ? "top-9" : "top-1.5";
+  const moveTop =
+    entry.isCommander && !isSideboard ? "top-[4.65rem]" : "top-9";
+
   return (
     <li
       aria-current={highlighted ? "true" : undefined}
       className="group relative"
       onMouseEnter={(e) =>
-        onHover({ src: entry.imageNormal, x: e.clientX, y: e.clientY })
+        onHover({
+          src: entry.imageNormal ?? entry.imageSmall,
+          x: e.clientX,
+          y: e.clientY,
+        })
       }
       onMouseMove={(e) =>
-        onHover({ src: entry.imageNormal, x: e.clientX, y: e.clientY })
+        onHover({
+          src: entry.imageNormal ?? entry.imageSmall,
+          x: e.clientX,
+          y: e.clientY,
+        })
       }
       onMouseLeave={() => onHover(null)}
     >
@@ -364,9 +494,9 @@ function DeckTile({
             : "ring-1 ring-black/10 group-hover:ring-accent"
         }`}
       >
-        {entry.imageNormal ? (
+        {entry.imageNormal || entry.imageSmall ? (
           <img
-            src={entry.imageNormal}
+            src={entry.imageNormal ?? entry.imageSmall}
             alt={entry.name}
             className="block aspect-[488/680] w-full object-cover"
             loading="lazy"
@@ -378,6 +508,12 @@ function DeckTile({
           </div>
         )}
 
+        {entry.isCommander && !isSideboard && (
+          <div className="pointer-events-none absolute left-1.5 top-1.5 rounded-full bg-accent px-2 py-1 text-[10px] font-semibold uppercase text-white shadow">
+            Commander
+          </div>
+        )}
+
         {/* trash: remove all copies */}
         <button
           onClick={(e) => {
@@ -386,9 +522,21 @@ function DeckTile({
           }}
           aria-label={`Remove all ${entry.name}`}
           title="Remove all copies"
-          className="absolute left-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted opacity-0 shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100"
+          className={`absolute left-1.5 ${trashTop} flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted opacity-0 shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100`}
         >
           <TrashIcon />
+        </button>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onMove();
+          }}
+          aria-label={moveLabel}
+          title={moveTitle}
+          className={`absolute left-1.5 ${moveTop} flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted opacity-0 shadow ring-1 ring-black/10 transition hover:bg-white hover:text-accent group-hover:opacity-100`}
+        >
+          <MoveIcon direction={isSideboard ? "left" : "right"} />
         </button>
 
         {/* quantity badge overlay */}
@@ -397,7 +545,11 @@ function DeckTile({
         </div>
 
         {/* +/− controls */}
-        <div className="absolute inset-x-1.5 bottom-1.5 flex items-center justify-between gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+        <div
+          className={`absolute inset-x-1.5 bottom-1.5 flex items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 ${
+            isSideboard ? "justify-center" : "justify-between"
+          }`}
+        >
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -409,6 +561,26 @@ function DeckTile({
           >
             −
           </button>
+          {!isSideboard && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetCommander(!entry.isCommander);
+              }}
+              className={`deck-action-button ${
+                entry.isCommander ? "deck-action-button-active" : ""
+              }`}
+              aria-pressed={entry.isCommander}
+              aria-label={
+                entry.isCommander
+                  ? `Remove ${entry.name} as commander`
+                  : `Set ${entry.name} as commander`
+              }
+              title={entry.isCommander ? "Remove commander" : "Set commander"}
+            >
+              <CommanderIcon />
+            </button>
+          )}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -434,17 +606,26 @@ function DeckTile({
 
 function DeckRow({
   entry,
+  boardView,
   highlighted,
   onSetQty,
+  onSetCommander,
+  onMove,
   onHover,
   onSelect,
 }: {
   entry: DeckEntry;
+  boardView: BoardView;
   highlighted?: boolean;
   onSetQty: (q: number) => void;
+  onSetCommander: (isCommander: boolean) => void;
+  onMove: () => void;
   onHover: (p: { src?: string; x: number; y: number } | null) => void;
   onSelect: () => void;
 }) {
+  const isSideboard = boardView === "sideboard";
+  const moveTitle = isSideboard ? "Move to main deck" : "Move to sideboard";
+
   return (
     <li
       aria-current={highlighted ? "true" : undefined}
@@ -475,7 +656,14 @@ function DeckRow({
         <div className="h-[84px] w-[60px] shrink-0 rounded-md bg-surface-subtle sm:h-[100px] sm:w-[72px]" />
       )}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold">{entry.name}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className="truncate text-sm font-semibold">{entry.name}</div>
+          {entry.isCommander && !isSideboard && (
+            <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
+              Commander
+            </span>
+          )}
+        </div>
         <div className="truncate text-xs text-text-muted">
           {entry.typeLine ?? ""}
         </div>
@@ -508,6 +696,37 @@ function DeckRow({
           title="Add one"
         >
           +
+        </button>
+        {!isSideboard && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onSetCommander(!entry.isCommander);
+            }}
+            className={`deck-action-button ${
+              entry.isCommander ? "deck-action-button-active" : ""
+            }`}
+            aria-pressed={entry.isCommander}
+            aria-label={
+              entry.isCommander
+                ? `Remove ${entry.name} as commander`
+                : `Set ${entry.name} as commander`
+            }
+            title={entry.isCommander ? "Remove commander" : "Set commander"}
+          >
+            <CommanderIcon />
+          </button>
+        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onMove();
+          }}
+          className="deck-action-button"
+          aria-label={`${moveTitle}: ${entry.name}`}
+          title={moveTitle}
+        >
+          <MoveIcon direction={isSideboard ? "left" : "right"} />
         </button>
         <button
           onClick={(e) => {
@@ -665,6 +884,47 @@ function TrashIcon() {
       strokeLinejoin="round"
     >
       <path d="M3.5 5.5h13M8 5.5V4a1.5 1.5 0 0 1 1.5-1.5h1A1.5 1.5 0 0 1 12 4v1.5M5 5.5l.8 10a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4l.8-10M8.5 9v5M11.5 9v5" />
+    </svg>
+  );
+}
+
+function CommanderIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width={15}
+      height={15}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m4 8 3 2.5L10 4l3 6.5L16 8l-1.4 7H5.4L4 8Z" />
+      <path d="M6 16h8" />
+    </svg>
+  );
+}
+
+function MoveIcon({ direction }: { direction: "left" | "right" }) {
+  const line = direction === "right" ? "M4 10h10" : "M16 10H6";
+  const arrow = direction === "right" ? "m11 6 4 4-4 4" : "m9 6-4 4 4 4";
+  const rail = direction === "right" ? "M4 5.5V14.5" : "M16 5.5v9";
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width={15}
+      height={15}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d={line} />
+      <path d={arrow} />
+      <path d={rail} />
     </svg>
   );
 }

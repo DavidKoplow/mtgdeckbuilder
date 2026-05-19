@@ -60,13 +60,16 @@ export function PlayCardView({
   }
 
   const allDestinations: { zone: Zone; label: string }[] = [
+    { zone: "command", label: "→ Command" },
     { zone: "hand", label: "→ Hand" },
     { zone: "battlefield", label: "→ Battlefield" },
     { zone: "graveyard", label: "→ Graveyard" },
     { zone: "exile", label: "→ Exile" },
     { zone: "library", label: "→ Library (top)" },
   ];
-  const destinations = allDestinations.filter((d) => d.zone !== zone);
+  const destinations = allDestinations.filter(
+    (d) => d.zone !== zone && (d.zone !== "command" || card.isCommander)
+  );
 
   function onDragStart(e: React.DragEvent) {
     e.dataTransfer.effectAllowed = "move";
@@ -148,6 +151,12 @@ export function PlayCardView({
               {k === "+1/+1" || k === "-1/-1" ? `${k}×${v}` : `${k}: ${v}`}
             </span>
           ))}
+        </div>
+      )}
+
+      {card.isCommander && (
+        <div className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-accent px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white shadow">
+          Cmd
         </div>
       )}
 

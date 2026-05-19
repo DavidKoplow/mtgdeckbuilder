@@ -90,7 +90,7 @@ export function ExportButton({ deck, disabled }: Props) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-full z-30 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-white shadow-xl"
+          className="absolute right-0 top-full z-[80] mt-2 w-80 overflow-hidden rounded-xl border border-border bg-white shadow-xl"
         >
           <div className="border-b border-border bg-surface-raised px-3 py-2 text-[11px] font-semibold uppercase text-text-muted">
             Export format

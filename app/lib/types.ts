@@ -30,6 +30,7 @@ export type ScryfallCard = {
   rarity?: string;
   set?: string;
   set_name?: string;
+  released_at?: string;
   collector_number?: string;
   power?: string;
   toughness?: string;
@@ -41,6 +42,7 @@ export type ScryfallCard = {
   legalities?: Record<string, string>;
   printings?: string[];
   prices?: { usd?: string | null };
+  edhrec_rank?: number;
   similarity?: number;
   rerank_score?: number;
 };
@@ -82,6 +84,7 @@ export type DeckEntry = {
   cardId: string;
   name: string;
   quantity: number;
+  isCommander?: boolean;
   // Snapshot so decks still render when offline / API is down
   imageSmall?: string;
   imageNormal?: string;
@@ -89,6 +92,7 @@ export type DeckEntry = {
   cmc?: number;
   typeLine?: string;
   colors?: string[];
+  rarity?: string;
   set?: string;
   collectorNumber?: string;
   priceUsd?: number;
@@ -99,9 +103,11 @@ export type Deck = {
   name: string;
   format: string;
   cardCount: number;
+  sideboardCount: number;
   createdAt: number;
   updatedAt: number;
   entries: DeckEntry[];
+  sideboard: DeckEntry[];
 };
 
-export type DeckSummary = Omit<Deck, "entries">;
+export type DeckSummary = Omit<Deck, "entries" | "sideboard">;

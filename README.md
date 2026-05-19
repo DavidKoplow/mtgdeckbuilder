@@ -68,7 +68,7 @@ NEXT_PUBLIC_BASE_PATH=
 # Production builds
 CONVEX_DEPLOYMENT=prod:superb-goshawk-593
 NEXT_PUBLIC_CONVEX_URL=https://superb-goshawk-593.convex.cloud
-NEXT_PUBLIC_BASE_PATH=/mtgdeckbuilder
+NEXT_PUBLIC_BASE_PATH=
 ```
 
 3. Configure WorkOS AuthKit in `.env.local`:
@@ -83,11 +83,14 @@ NEXT_PUBLIC_WORKOS_DEV_MODE=true
 
 For GitHub Pages, configure the WorkOS app with:
 
-- Redirect URI:
-  `https://your-github-user.github.io/mtgdeckbuilder/callback/`
-- Sign-in endpoint:
-  `https://your-github-user.github.io/mtgdeckbuilder/login/`
-- CORS origin: `https://your-github-user.github.io`
+- Redirect URI: `https://magicaldeckgatherer.com/callback/`
+- Sign-in endpoint: `https://magicaldeckgatherer.com/login/`
+- CORS origin: `https://magicaldeckgatherer.com`
+
+If you deploy under the repository URL instead of the custom domain, set
+`NEXT_PUBLIC_BASE_PATH=/mtgdeckbuilder` and use
+`https://davidkoplow.github.io/mtgdeckbuilder/callback/` as the WorkOS redirect
+URI.
 
 Set `NEXT_PUBLIC_WORKOS_API_HOSTNAME` if you configure a custom WorkOS
 authentication domain. Without one, `NEXT_PUBLIC_WORKOS_DEV_MODE=true` stores

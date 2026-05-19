@@ -20,21 +20,16 @@ export function AuthButton() {
 
   if (isAuthenticated) {
     return (
-      <div className="flex items-center gap-2">
-        <span className="hidden max-w-40 truncate text-xs text-text-subtle sm:inline">
-          Signed in
-        </span>
-        <button
-          onClick={() => {
-            setBusy(true);
-            signOut({ returnTo: getAppHomePath() });
-          }}
-          disabled={busy}
-          className="control px-3 py-2 text-xs"
-        >
-          {busy ? "Signing out..." : "Sign out"}
-        </button>
-      </div>
+      <button
+        onClick={() => {
+          setBusy(true);
+          signOut({ returnTo: getAppHomePath() });
+        }}
+        disabled={busy}
+        className="control px-3 py-2 text-xs"
+      >
+        {busy ? "Signing out..." : "Sign out"}
+      </button>
     );
   }
 

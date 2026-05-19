@@ -1,21 +1,22 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const deckCardRef = v.object({
+  cardKey: v.number(),
+  quantity: v.number(),
+  isCommander: v.optional(v.boolean()),
+});
+
 export default defineSchema({
   userDecks: defineTable({
     userId: v.string(),
     deckId: v.string(),
     name: v.string(),
     format: v.string(),
-    cards: v.optional(
-      v.array(
-        v.object({
-          cardKey: v.number(),
-          quantity: v.number(),
-        })
-      )
-    ),
+    cards: v.optional(v.array(deckCardRef)),
+    sideboardCards: v.optional(v.array(deckCardRef)),
     cardCount: v.optional(v.number()),
+    sideboardCount: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_user_deck", ["userId", "deckId"]),
@@ -29,6 +30,7 @@ export default defineSchema({
     cmc: v.optional(v.number()),
     typeLine: v.optional(v.string()),
     colors: v.optional(v.array(v.string())),
+    rarity: v.optional(v.string()),
     set: v.optional(v.string()),
     collectorNumber: v.optional(v.string()),
     priceUsd: v.optional(v.number()),

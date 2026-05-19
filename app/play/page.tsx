@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useDeck } from "../lib/decks";
 import {
   PlayCard,
+  PlayMode,
   Zone,
   usePlaytest,
 } from "../lib/playtest";
@@ -111,13 +112,13 @@ export default function PlayPage() {
 }
 
 function Playtest({ deck }: { deck: Deck }) {
-  const pt = usePlaytest(deck);
+  const commanderEntry = deck.entries.find((entry) => entry.isCommander);
+  const initialMode: PlayMode = commanderEntry ? "commander" : "normal";
+  const pt = usePlaytest(deck, initialMode);
   const { state } = pt;
   const [hover, setHover] = useState<Hover>(null);
   const [scryPromptOpen, setScryPromptOpen] = useState(false);
   const [tokenOpen, setTokenOpen] = useState(false);
-
-  const isCommander = deck.format === "commander";
 
   function onHover(src: string | undefined, x: number, y: number) {
     setHover(src ? { src, x, y } : null);
@@ -137,13 +138,32 @@ function Playtest({ deck }: { deck: Deck }) {
           <div className="min-w-0 truncate text-sm font-semibold">
             {deck.name}
           </div>
-          <span className="rounded-full border border-border bg-white px-2.5 py-1 text-[11px] capitalize text-text-subtle">
-            {deck.format}
-          </span>
+          <label className="flex h-8 items-center gap-2 rounded-lg border border-border bg-white px-2 text-xs text-text-muted">
+            <span>Mode</span>
+            <select
+              value={state.mode}
+              onChange={(e) => pt.newGame(e.target.value as PlayMode)}
+              className="bg-transparent text-xs font-medium text-text outline-none"
+              aria-label="Playtest game mode"
+            >
+              <option value="normal">Normal</option>
+              <option value="commander">Commander</option>
+            </select>
+          </label>
+          {commanderEntry && (
+            <span className="max-w-48 truncate rounded-full border border-accent/30 bg-accent-subtle px-2.5 py-1 text-[11px] font-medium text-accent">
+              Commander: {commanderEntry.name}
+            </span>
+          )}
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-sm">
           <LifeCounter life={state.life} onDelta={pt.lifeDelta} onSet={pt.setLife} />
+          <PoisonCounter
+            poison={state.poison}
+            onDelta={pt.poisonDelta}
+            onSet={pt.setPoison}
+          />
           <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
             <span className="text-text-muted">Turn</span>
             <span className="font-semibold tabular-nums">{state.turn}</span>
@@ -164,7 +184,7 @@ function Playtest({ deck }: { deck: Deck }) {
             <ToolButton onClick={() => pt.searchOpen("hand")}>Search</ToolButton>
             <ToolButton onClick={() => setTokenOpen(true)}>Token</ToolButton>
             <ToolButton
-              onClick={() => pt.newGame(isCommander ? 40 : 20)}
+              onClick={() => pt.newGame(state.mode)}
               danger
             >
               New game
@@ -272,6 +292,18 @@ function Playtest({ deck }: { deck: Deck }) {
               </DropZone>
             </div>
 
+            {state.mode === "commander" && (
+              <StackZone
+                label="Command"
+                cards={state.command}
+                onHover={onHover}
+                onDropFrom={(from, id) => pt.move(id, from, "command")}
+                onMoveTop={(to) => {
+                  const top = state.command[state.command.length - 1];
+                  if (top) pt.move(top.instanceId, "command", to);
+                }}
+              />
+            )}
             <StackZone
               label="Library"
               cards={state.library}
@@ -359,6 +391,7 @@ function Playtest({ deck }: { deck: Deck }) {
 
       <TokenCreator
         open={tokenOpen}
+        recentTokens={state.recentTokens}
         onClose={() => setTokenOpen(false)}
         onCreate={pt.addToken}
       />
@@ -477,6 +510,9 @@ function StackZone({
           <option value="hand">→ Hand</option>
           <option value="battlefield">→ Battlefield</option>
           <option value="library">→ Library top</option>
+          {top?.isCommander && label !== "Command" && (
+            <option value="command">→ Command</option>
+          )}
           {label !== "Graveyard" && <option value="graveyard">→ Graveyard</option>}
           {label !== "Exile" && <option value="exile">→ Exile</option>}
         </select>
@@ -577,6 +613,43 @@ function LifeCounter({
         onClick={() => onDelta(+1)}
         className="accent-fill flex h-6 w-6 items-center justify-center rounded-md"
         aria-label="Gain 1 life"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+function PoisonCounter({
+  poison,
+  onDelta,
+  onSet,
+}: {
+  poison: number;
+  onDelta: (d: number) => void;
+  onSet: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
+      <span className="text-text-muted">Poison</span>
+      <button
+        onClick={() => onDelta(-1)}
+        className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-subtle hover:bg-border"
+        aria-label="Remove 1 poison counter"
+      >
+        −
+      </button>
+      <input
+        type="number"
+        min={0}
+        value={poison}
+        onChange={(e) => onSet(Number(e.target.value) || 0)}
+        className="w-12 rounded-md border border-border bg-white px-1 py-0.5 text-center text-sm font-semibold tabular-nums outline-none focus:border-accent"
+      />
+      <button
+        onClick={() => onDelta(+1)}
+        className="accent-fill flex h-6 w-6 items-center justify-center rounded-md"
+        aria-label="Add 1 poison counter"
       >
         +
       </button>
