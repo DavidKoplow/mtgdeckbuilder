@@ -15,8 +15,11 @@ type Props = {
   onToggleSimilaritySeed?: (card: ScryfallCard) => void;
   isSimilaritySeed?: boolean;
   similaritySeedDisabled?: boolean;
+  similaritySeedDisabledTitle?: string;
   offlineActive?: boolean;
   headerAccessory?: ReactNode;
+  readOnly?: boolean;
+  readOnlyReason?: string;
 };
 
 export function CardDetail({
@@ -29,8 +32,11 @@ export function CardDetail({
   onToggleSimilaritySeed,
   isSimilaritySeed = false,
   similaritySeedDisabled = false,
+  similaritySeedDisabledTitle,
   offlineActive = false,
   headerAccessory,
+  readOnly = false,
+  readOnlyReason = "This deck is read-only",
 }: Props) {
   const [face, setFace] = useState(0);
 
@@ -207,12 +213,13 @@ export function CardDetail({
                     Deck
                   </span>
                   <button
+                    disabled={readOnly}
                     onClick={() =>
                       onDeckQuantityChange(card, Math.max(0, deckQuantity - 1))
                     }
-                    className="flex h-6 w-6 items-center justify-center text-sm font-semibold text-text-muted transition hover:bg-surface-subtle hover:text-text lg:h-8 lg:w-8 lg:text-base"
+                    className="flex h-6 w-6 items-center justify-center text-sm font-semibold text-text-muted transition hover:bg-surface-subtle hover:text-text disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-text-muted lg:h-8 lg:w-8 lg:text-base"
                     aria-label={`Remove one ${name} from deck`}
-                    title="Remove one"
+                    title={readOnly ? readOnlyReason : "Remove one"}
                   >
                     −
                   </button>
@@ -221,24 +228,27 @@ export function CardDetail({
                     min={0}
                     max={255}
                     value={deckQuantity}
+                    disabled={readOnly}
                     onChange={(e) =>
                       onDeckQuantityChange(
                         card,
                         Math.min(255, Math.max(0, Number(e.target.value) || 0))
                       )
                     }
-                    className="quantity-input h-6 w-9 border-x border-border bg-white/80 text-xs font-semibold text-text outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 lg:h-8 lg:w-12 lg:text-sm"
+                    title={readOnly ? readOnlyReason : "Copies in this deck"}
+                    className="quantity-input h-6 w-9 border-x border-border bg-white/80 text-xs font-semibold text-text outline-none transition disabled:opacity-70 focus:border-accent focus:ring-2 focus:ring-accent/20 lg:h-8 lg:w-12 lg:text-sm"
                   />
                   <button
+                    disabled={readOnly}
                     onClick={() =>
                       onDeckQuantityChange(
                         card,
                         Math.min(255, deckQuantity + 1)
                       )
                     }
-                    className="flex h-6 w-6 items-center justify-center text-sm font-semibold text-text-muted transition hover:bg-surface-subtle hover:text-text lg:h-8 lg:w-8 lg:text-base"
+                    className="flex h-6 w-6 items-center justify-center text-sm font-semibold text-text-muted transition hover:bg-surface-subtle hover:text-text disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-text-muted lg:h-8 lg:w-8 lg:text-base"
                     aria-label={`Add one ${name} to deck`}
-                    title="Add one"
+                    title={readOnly ? readOnlyReason : "Add one"}
                   >
                     +
                   </button>
@@ -247,10 +257,12 @@ export function CardDetail({
                   {onCommanderChange && (
                     <button
                       onClick={() => onCommanderChange(card, !isCommander)}
-                      disabled={deckQuantity === 0}
+                      disabled={readOnly || deckQuantity === 0}
                       aria-pressed={isCommander}
                       title={
-                        deckQuantity === 0
+                        readOnly
+                          ? readOnlyReason
+                          : deckQuantity === 0
                           ? "Add this card to the deck before making it commander"
                           : isCommander
                             ? "Remove commander tag"
@@ -269,6 +281,12 @@ export function CardDetail({
                     <button
                       onClick={() => onToggleSimilaritySeed(card)}
                       disabled={similaritySeedDisabled}
+                      title={
+                        similaritySeedDisabledTitle ??
+                        (isSimilaritySeed
+                            ? "Remove similarity seed"
+                            : "Add to similarity search")
+                      }
                       className={`card-detail-secondary-action h-7 min-w-0 rounded-md border px-1.5 text-[9px] font-semibold leading-tight shadow-sm transition hover:border-accent disabled:cursor-not-allowed disabled:opacity-40 sm:text-[10px] lg:h-9 lg:px-3 lg:text-xs ${
                         isSimilaritySeed
                           ? "border-accent bg-accent-subtle text-accent"

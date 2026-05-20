@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useDeck } from "../lib/decks";
 import {
   PlayCard,
@@ -27,18 +27,73 @@ import {
 } from "../components/playtest/MobilePlaytestTabs";
 import { useFinePointer, useMediaQuery } from "../hooks/useMediaQuery";
 import { WORKSPACE_DESKTOP_QUERY } from "../lib/breakpoints";
+import {
+  PLAYTEST_MOBILE_WARNING_REDIRECT,
+  isPlaytestSupportedViewport,
+} from "../lib/playtestSupport";
 import type { Deck } from "../lib/types";
 
 type Hover = { src?: string; x: number; y: number } | null;
+type PlaytestAccess = "checking" | "allowed" | "blocked";
 
 function isLand(typeLine: string | undefined): boolean {
   return !!typeLine && /\bland\b/i.test(typeLine);
 }
 
+function usePlaytestAccess(): PlaytestAccess {
+  const router = useRouter();
+  const warnedRef = useRef(false);
+  const [access, setAccess] = useState<PlaytestAccess>("checking");
+
+  useEffect(() => {
+    function blockMobilePlaytest() {
+      setAccess("blocked");
+      if (warnedRef.current) return;
+
+      warnedRef.current = true;
+      router.replace(PLAYTEST_MOBILE_WARNING_REDIRECT);
+    }
+
+    function checkAccess() {
+      if (isPlaytestSupportedViewport()) {
+        setAccess("allowed");
+        return;
+      }
+
+      blockMobilePlaytest();
+    }
+
+    const media = window.matchMedia(WORKSPACE_DESKTOP_QUERY);
+    checkAccess();
+
+    media.addEventListener("change", checkAccess);
+    return () => media.removeEventListener("change", checkAccess);
+  }, [router]);
+
+  return access;
+}
+
 function PlayPageContent() {
+  const access = usePlaytestAccess();
+
+  if (access !== "allowed") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center bg-bg p-8 text-sm text-text-subtle">
+        <div className="flex items-center gap-3 rounded-full border border-border bg-white px-4 py-2 shadow-sm">
+          <span className="accent-dot h-2.5 w-2.5 animate-pulse rounded-full" />
+          {access === "blocked" ? "Returning to builder" : "Checking playtest"}
+        </div>
+      </div>
+    );
+  }
+
+  return <PlayDeckContent />;
+}
+
+function PlayDeckContent() {
   const searchParams = useSearchParams();
   const deckId = searchParams.get("deck") ?? "";
-  const { deck, hydrated, isAuthenticated } = useDeck(deckId || null);
+  const { deck, hydrated, isSignedIn } = useDeck(deckId || null);
 
   if (!hydrated) {
     return (
@@ -51,10 +106,10 @@ function PlayPageContent() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isSignedIn) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
-        <p>Sign in to playtest cloud decks.</p>
+        <p>You need to log in or create a free account to playtest this deck.</p>
         <AuthButton />
       </div>
     );
@@ -64,7 +119,7 @@ function PlayPageContent() {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
         <p>No deck selected.</p>
-        <Link href="/" className="text-accent hover:underline">
+        <Link href="/builder" className="text-accent hover:underline">
           Back to builder
         </Link>
       </div>
@@ -75,7 +130,7 @@ function PlayPageContent() {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
         <p>Deck not found.</p>
-        <Link href="/" className="text-accent hover:underline">
+        <Link href="/builder" className="text-accent hover:underline">
           Back to builder
         </Link>
       </div>
@@ -86,7 +141,7 @@ function PlayPageContent() {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-sm text-text-muted">
         <p>This deck has no cards to play with.</p>
-        <Link href="/" className="text-accent hover:underline">
+        <Link href="/builder" className="text-accent hover:underline">
           Back to builder
         </Link>
       </div>
@@ -153,7 +208,7 @@ function Playtest({ deck }: { deck: Deck }) {
       >
         <div className="flex min-w-0 items-center justify-between gap-2 lg:hidden">
           <Link
-            href="/"
+            href="/builder"
             className="control flex min-h-11 shrink-0 items-center gap-2 px-3 py-2 text-sm"
           >
             <AppIcon size={20} className="rounded-md" />
@@ -179,7 +234,7 @@ function Playtest({ deck }: { deck: Deck }) {
         >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Link
-            href="/"
+            href="/builder"
             className="control hidden items-center gap-2 px-3 py-2 text-sm lg:flex"
           >
             <AppIcon size={20} className="rounded-md" />

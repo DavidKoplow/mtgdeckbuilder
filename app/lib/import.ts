@@ -1,8 +1,6 @@
-import type { DeckEntry } from "./types";
+import type { DeckEntry, DeckZone } from "./types";
 import { cardToEntry } from "./decks";
 import { getCardsByIdentifiers, type CollectionIdentifier } from "./scryfall";
-
-export type DeckZone = "main" | "sideboard";
 
 export type ParsedLine = {
   quantity: number;
@@ -16,6 +14,7 @@ export type ParsedLine = {
 export type ImportResult = {
   entries: DeckEntry[];
   sideboard: DeckEntry[];
+  maybeboard: DeckEntry[];
   unresolved: ParsedLine[];
   deckName?: string;
 };
@@ -45,6 +44,7 @@ function frontFaceName(name: string): string {
 }
 
 function zoneForSection(section: string | null): DeckZone {
+  if (section === "maybeboard") return "maybeboard";
   return section === "sideboard" ? "sideboard" : "main";
 }
 
@@ -110,6 +110,7 @@ type JsonDeckShape = {
   name?: string;
   entries?: JsonDeckEntryShape[];
   sideboard?: JsonDeckEntryShape[];
+  maybeboard?: JsonDeckEntryShape[];
 };
 
 export function parseDeckInput(
@@ -119,7 +120,11 @@ export function parseDeckInput(
   if (trimmed.startsWith("{")) {
     try {
       const obj = JSON.parse(trimmed) as JsonDeckShape;
-      if (Array.isArray(obj.entries) || Array.isArray(obj.sideboard)) {
+      if (
+        Array.isArray(obj.entries) ||
+        Array.isArray(obj.sideboard) ||
+        Array.isArray(obj.maybeboard)
+      ) {
         const toLines = (
           entries: JsonDeckEntryShape[] | undefined,
           zone: DeckZone
@@ -139,6 +144,7 @@ export function parseDeckInput(
           lines: [
             ...toLines(obj.entries, "main"),
             ...toLines(obj.sideboard, "sideboard"),
+            ...toLines(obj.maybeboard, "maybeboard"),
           ],
         };
       }
@@ -153,7 +159,7 @@ export async function resolveLines(
   lines: ParsedLine[]
 ): Promise<ImportResult> {
   if (lines.length === 0) {
-    return { entries: [], sideboard: [], unresolved: [] };
+    return { entries: [], sideboard: [], maybeboard: [], unresolved: [] };
   }
 
   const identifiers: CollectionIdentifier[] = lines.map((l) => {
@@ -179,6 +185,7 @@ export async function resolveLines(
 
   const entries: DeckEntry[] = [];
   const sideboard: DeckEntry[] = [];
+  const maybeboard: DeckEntry[] = [];
   const unresolved: ParsedLine[] = [];
   for (const l of lines) {
     const card = byName.get(l.name.toLowerCase());
@@ -186,16 +193,21 @@ export async function resolveLines(
       unresolved.push(l);
       continue;
     }
-    const target = l.zone === "sideboard" ? sideboard : entries;
+    const target =
+      l.zone === "sideboard"
+        ? sideboard
+        : l.zone === "maybeboard"
+          ? maybeboard
+          : entries;
     const existing = target.find((e) => e.cardId === card.id);
     if (existing) {
       existing.quantity += l.quantity;
-      if (l.zone !== "sideboard") existing.isCommander ||= l.isCommander;
+      if (l.zone === "main") existing.isCommander ||= l.isCommander;
     } else {
       const entry = cardToEntry(card, l.quantity);
-      if (l.zone !== "sideboard" && l.isCommander) entry.isCommander = true;
+      if (l.zone === "main" && l.isCommander) entry.isCommander = true;
       target.push(entry);
     }
   }
-  return { entries, sideboard, unresolved };
+  return { entries, sideboard, maybeboard, unresolved };
 }

@@ -28,6 +28,11 @@ export function getAppHomePath() {
   return `${basePath}/`;
 }
 
+export function getAppBuilderPath() {
+  const basePath = normalizeBasePath(configuredBasePath);
+  return `${basePath}/builder/`;
+}
+
 export function getAppCallbackPath() {
   const basePath = normalizeBasePath(configuredBasePath);
   return `${basePath}/callback/`;

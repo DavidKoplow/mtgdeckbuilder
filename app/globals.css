@@ -401,7 +401,8 @@ a {
     font-size: 0.75rem;
   }
 
-  .mobile-header-overlay button.control[aria-label="Remove all cards"] {
+  .mobile-header-overlay button.control[aria-label="Remove all cards"],
+  .mobile-header-overlay .deck-visibility-button {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -746,7 +747,8 @@ a {
   transform: none;
 }
 
-.app-header button.control[aria-label="Remove all cards"] {
+.app-header button.control[aria-label="Remove all cards"],
+.app-header .deck-visibility-button {
   width: 2.25rem;
   padding: 0;
 }
@@ -943,7 +945,8 @@ a {
     font-size: 0.75rem;
   }
 
-  .app-header button.control[aria-label="Remove all cards"] {
+  .app-header button.control[aria-label="Remove all cards"],
+  .app-header .deck-visibility-button {
     width: 2.25rem;
   }
 

@@ -106,6 +106,7 @@ export function MobileAppHeader({
         <button
           type="button"
           onClick={onOpenDeckSelector}
+          data-tour="tour-decks"
           aria-label="Open deck list"
           title="Your decks"
           className="mobile-header-deck-trigger flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-text transition"
@@ -120,6 +121,7 @@ export function MobileAppHeader({
         <button
           type="button"
           onClick={onToggleMenu}
+          data-tour="tour-account"
           aria-expanded={menuOpen}
           aria-controls="mobile-header-menu"
           aria-label={menuOpen ? "Close menu" : "Open menu"}

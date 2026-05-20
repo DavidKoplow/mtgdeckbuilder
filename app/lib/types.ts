@@ -88,6 +88,7 @@ export type DeckEntry = {
   // Snapshot so decks still render when offline / API is down
   imageSmall?: string;
   imageNormal?: string;
+  imageArtCrop?: string;
   manaCost?: string;
   cmc?: number;
   typeLine?: string;
@@ -98,16 +99,62 @@ export type DeckEntry = {
   priceUsd?: number;
 };
 
+export type DeckZone = "main" | "sideboard" | "maybeboard";
+
 export type Deck = {
   id: string;
+  publicId?: string;
+  isPublic: boolean;
   name: string;
   format: string;
   cardCount: number;
   sideboardCount: number;
+  maybeboardCount: number;
   createdAt: number;
   updatedAt: number;
   entries: DeckEntry[];
   sideboard: DeckEntry[];
+  maybeboard: DeckEntry[];
 };
 
-export type DeckSummary = Omit<Deck, "entries" | "sideboard">;
+export type DeckSummary = Omit<Deck, "entries" | "sideboard" | "maybeboard">;
+
+export type PublicDeckPreviewCard = {
+  name: string;
+  quantity: number;
+};
+
+export type DeckColorBreakdown = {
+  W: number;
+  U: number;
+  B: number;
+  R: number;
+  G: number;
+  C: number;
+};
+
+export type PublicDeckSummary = {
+  publicId: string;
+  name: string;
+  format: string;
+  cardCount: number;
+  sideboardCount: number;
+  maybeboardCount: number;
+  createdAt: number;
+  updatedAt: number;
+  authorName: string;
+  viewCount: number;
+  matchingCards: PublicDeckPreviewCard[];
+  previewCards: PublicDeckPreviewCard[];
+  featuredCardName?: string;
+  featuredImage?: string;
+  totalPriceUsd?: number;
+  pricedCardCount: number;
+  manaCurve: number[];
+  colorBreakdown: DeckColorBreakdown;
+};
+
+export type PublicDeck = Omit<Deck, "publicId"> & {
+  publicId: string;
+  authorName: string;
+};

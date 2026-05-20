@@ -365,11 +365,12 @@ export async function resolveLinesOffline(
     set?: string;
     collectorNumber?: string;
     isCommander?: boolean;
-    zone?: "main" | "sideboard";
+    zone?: "main" | "sideboard" | "maybeboard";
   }>
 ): Promise<{
   entries: DeckEntry[];
   sideboard: DeckEntry[];
+  maybeboard: DeckEntry[];
   unresolved: typeof lines;
 }> {
   const identifiers = lines.map((line) => {
@@ -390,6 +391,7 @@ export async function resolveLinesOffline(
 
   const entries: DeckEntry[] = [];
   const sideboard: DeckEntry[] = [];
+  const maybeboard: DeckEntry[] = [];
   const unresolved: typeof lines = [];
   for (const line of lines) {
     const card = byName.get(line.name.toLowerCase());
@@ -397,23 +399,28 @@ export async function resolveLinesOffline(
       unresolved.push(line);
       continue;
     }
-    const target = line.zone === "sideboard" ? sideboard : entries;
+    const target =
+      line.zone === "sideboard"
+        ? sideboard
+        : line.zone === "maybeboard"
+          ? maybeboard
+          : entries;
     const existing = target.find((entry) => entry.cardId === card.id);
     if (existing) {
       existing.quantity += line.quantity;
-      if (line.zone !== "sideboard") {
+      if (line.zone === "main") {
         existing.isCommander ||= line.isCommander;
       }
     } else {
       const entry = cardToEntrySnapshot(card, line.quantity);
-      if (line.zone !== "sideboard" && line.isCommander) {
+      if (line.zone === "main" && line.isCommander) {
         entry.isCommander = true;
       }
       target.push(entry);
     }
   }
 
-  return { entries, sideboard, unresolved };
+  return { entries, sideboard, maybeboard, unresolved };
 }
 
 export async function loadOfflineDeckSnapshot(): Promise<OfflineDeckSnapshot> {
@@ -531,7 +538,11 @@ export async function cacheNormalArtForDecks(decks: Deck[]) {
   const urls = new Set<string>();
   const cardIds = new Set<string>();
   for (const deck of decks) {
-    for (const entry of [...deck.entries, ...(deck.sideboard ?? [])]) {
+    for (const entry of [
+      ...deck.entries,
+      ...(deck.sideboard ?? []),
+      ...(deck.maybeboard ?? []),
+    ]) {
       if (entry.imageNormal) urls.add(entry.imageNormal);
       cardIds.add(entry.cardId);
     }
@@ -1513,10 +1524,13 @@ function deckToSummary(deck: Deck): DeckSummary {
   const normalized = normalizeOfflineDeck(deck);
   return {
     id: normalized.id,
+    publicId: normalized.publicId,
+    isPublic: normalized.isPublic,
     name: normalized.name,
     format: normalized.format,
     cardCount: countDeckEntries(normalized.entries),
     sideboardCount: countDeckEntries(normalized.sideboard),
+    maybeboardCount: countDeckEntries(normalized.maybeboard),
     createdAt: normalized.createdAt,
     updatedAt: normalized.updatedAt,
   };
@@ -1525,19 +1539,25 @@ function deckToSummary(deck: Deck): DeckSummary {
 function normalizeOfflineDeck(deck: Deck): Deck {
   const sideboard = deck.sideboard ?? [];
   const entries = deck.entries ?? [];
+  const maybeboard = deck.maybeboard ?? [];
   return {
     ...deck,
+    isPublic: deck.isPublic ?? false,
     entries,
     sideboard,
+    maybeboard,
     cardCount: countDeckEntries(entries),
     sideboardCount: countDeckEntries(sideboard),
+    maybeboardCount: countDeckEntries(maybeboard),
   };
 }
 
 function normalizeOfflineSummary(summary: DeckSummary): DeckSummary {
   return {
     ...summary,
+    isPublic: summary.isPublic ?? false,
     sideboardCount: summary.sideboardCount ?? 0,
+    maybeboardCount: summary.maybeboardCount ?? 0,
   };
 }
 

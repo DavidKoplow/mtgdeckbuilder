@@ -6,6 +6,7 @@ type ResponsivePaneProps = {
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
+  tourId?: string;
 };
 
 /**
@@ -17,9 +18,11 @@ export function ResponsivePane({
   children,
   className = "",
   style,
+  tourId,
 }: ResponsivePaneProps) {
   return (
     <section
+      data-tour={tourId}
       className={`${mobileActive ? "flex" : "hidden"} lg:flex ${className}`.trim()}
       style={style}
     >

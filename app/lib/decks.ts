@@ -3,7 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { Deck, DeckEntry, DeckSummary, ScryfallCard } from "./types";
+import type {
+  Deck,
+  DeckEntry,
+  DeckSummary,
+  DeckZone,
+  PublicDeck,
+  ScryfallCard,
+} from "./types";
 import { getCardImage, getCardsByIdentifiers } from "./scryfall";
 import {
   cacheNormalArtForDecks,
@@ -17,8 +24,6 @@ import {
 } from "./offline";
 
 type Snapshot = { deck: Deck; activeId: string };
-type DeckZone = "main" | "sideboard";
-
 const CARD_QUANTITY_LIMIT = 255;
 const MAX_HISTORY = 100;
 const EMPTY_DECK_SUMMARIES: DeckSummary[] = [];
@@ -30,17 +35,90 @@ const EMPTY_OFFLINE_SNAPSHOT: OfflineDeckSnapshot = {
   pendingDirtyIds: [],
   pendingDeletedIds: [],
 };
+const DECK_SETTINGS_KEY = "mdg.deck.settings";
+const ANONYMOUS_DECK_ID = "anonymous-local-deck";
+const ANONYMOUS_DECK_NAME = "Untitled Deck";
 
 type UseDecksOptions = {
   offlineEnabled?: boolean;
   offlineActive?: boolean;
   online?: boolean;
+  temporaryPublicDeckId?: string | null;
   onOfflineSyncingChange?: (syncing: boolean) => void;
   onPendingDeckChangesChange?: () => void;
 };
 
 function uid(): string {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+  );
+}
+
+function readDefaultDeckPublic() {
+  if (typeof window === "undefined") return true;
+
+  try {
+    const raw = window.localStorage.getItem(DECK_SETTINGS_KEY);
+    if (!raw) return true;
+    const parsed = JSON.parse(raw) as { defaultPublic?: unknown };
+    return typeof parsed.defaultPublic === "boolean"
+      ? parsed.defaultPublic
+      : true;
+  } catch {
+    return true;
+  }
+}
+
+function writeDefaultDeckPublic(defaultPublic: boolean) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      DECK_SETTINGS_KEY,
+      JSON.stringify({ defaultPublic, updatedAt: Date.now() })
+    );
+  } catch {
+    // Storage can be disabled by browser privacy settings.
+  }
+}
+
+function createEmptyDeck(
+  deckId: string,
+  name = "Untitled Deck",
+  isPublic = false
+): Deck {
+  const now = Date.now();
+  return {
+    id: deckId,
+    isPublic,
+    name,
+    format: "commander",
+    cardCount: 0,
+    sideboardCount: 0,
+    maybeboardCount: 0,
+    createdAt: now,
+    updatedAt: now,
+    entries: [],
+    sideboard: [],
+    maybeboard: [],
+  };
+}
+
+function deckToSummary(deck: Deck): DeckSummary {
+  const counted = withDeckCounts(deck);
+  return {
+    id: counted.id,
+    publicId: counted.publicId,
+    isPublic: counted.isPublic,
+    name: counted.name,
+    format: counted.format,
+    cardCount: counted.cardCount,
+    sideboardCount: counted.sideboardCount,
+    maybeboardCount: counted.maybeboardCount,
+    createdAt: counted.createdAt,
+    updatedAt: counted.updatedAt,
+  };
 }
 
 function cloneDeck(deck: Deck): Deck {
@@ -48,6 +126,7 @@ function cloneDeck(deck: Deck): Deck {
     ...deck,
     entries: cloneEntries(deck.entries),
     sideboard: cloneEntries(deck.sideboard),
+    maybeboard: cloneEntries(deck.maybeboard),
   });
 }
 
@@ -62,12 +141,16 @@ function countEntries(entries: DeckEntry[] | undefined) {
 function withDeckCounts(deck: Deck): Deck {
   const entries = cloneEntries(deck.entries);
   const sideboard = cloneEntries(deck.sideboard);
+  const maybeboard = cloneEntries(deck.maybeboard);
   return {
     ...deck,
+    isPublic: deck.isPublic ?? false,
     entries,
     sideboard,
+    maybeboard,
     cardCount: countEntries(entries),
     sideboardCount: countEntries(sideboard),
+    maybeboardCount: countEntries(maybeboard),
   };
 }
 
@@ -80,6 +163,7 @@ export function cardToEntry(card: ScryfallCard, quantity = 1): DeckEntry {
     quantity,
     imageSmall: getCardImage(card, "small"),
     imageNormal: getCardImage(card, "normal"),
+    imageArtCrop: getCardImage(card, "art_crop"),
     manaCost: card.mana_cost || card.card_faces?.[0]?.mana_cost || undefined,
     cmc: card.cmc,
     typeLine: card.type_line || card.card_faces?.[0]?.type_line,
@@ -95,7 +179,13 @@ export function useDecks(options: UseDecksOptions = {}) {
   const auth = useConvexAuth();
   const offlineEnabled = options.offlineEnabled === true;
   const offlineActive = options.offlineActive === true;
+  const anonymousDecksActive = !auth.isLoading && !auth.isAuthenticated;
+  const localDecksActive = offlineActive || anonymousDecksActive;
+  const deckCacheEnabled =
+    offlineEnabled || localDecksActive || auth.isAuthenticated;
   const online = options.online !== false;
+  const temporaryPublicDeckId = options.temporaryPublicDeckId ?? null;
+  const viewingTemporaryDeck = temporaryPublicDeckId !== null;
   const onOfflineSyncingChange = options.onOfflineSyncingChange;
   const onPendingDeckChangesChange = options.onPendingDeckChangesChange;
   const [offlineSnapshot, setOfflineSnapshot] =
@@ -103,15 +193,32 @@ export function useDecks(options: UseDecksOptions = {}) {
   const [onlineDeckSummariesSnapshot, setOnlineDeckSummariesSnapshot] =
     useState<DeckSummary[]>(EMPTY_DECK_SUMMARIES);
   const [onlineDecksSnapshot, setOnlineDecksSnapshot] = useState<Deck[]>([]);
+  const [selectedActiveId, setSelectedActiveId] = useState<string | null>(null);
+  const [defaultDeckPublic, setDefaultDeckPublicState] = useState(() =>
+    readDefaultDeckPublic()
+  );
+  const anonymousStarterDeck = useMemo(
+    () => createEmptyDeck(ANONYMOUS_DECK_ID, ANONYMOUS_DECK_NAME),
+    []
+  );
+  const anonymousStarterSummary = useMemo(
+    () => deckToSummary(anonymousStarterDeck),
+    [anonymousStarterDeck]
+  );
   const deckSummariesResult = useQuery(
     api.decks.listDecks,
-    auth.isAuthenticated && !offlineActive ? {} : "skip"
+    auth.isAuthenticated && !localDecksActive ? {} : "skip"
   );
   const fullDecksResult = useQuery(
     api.decks.listDecksFull,
-    auth.isAuthenticated && offlineEnabled && !offlineActive ? {} : "skip"
+    auth.isAuthenticated && offlineEnabled && !localDecksActive ? {} : "skip"
   );
-  const offlineDecksLoaded = !offlineEnabled || offlineSnapshot !== null;
+  const temporaryDeckResult = useQuery(
+    api.decks.getPublicDeck,
+    temporaryPublicDeckId ? { publicId: temporaryPublicDeckId } : "skip"
+  );
+  const offlineDecksLoaded = !deckCacheEnabled || offlineSnapshot !== null;
+  const mergeOnlineDecksIntoLocal = offlineActive && auth.isAuthenticated;
   const pendingDeletedDeckIds = useMemo(
     () => offlineSnapshot?.pendingDeletedIds ?? EMPTY_DECK_IDS,
     [offlineSnapshot?.pendingDeletedIds]
@@ -120,12 +227,15 @@ export function useDecks(options: UseDecksOptions = {}) {
     () =>
       filterDeletedSummaries(
         mergeDeckSummaries(
-          onlineDeckSummariesSnapshot,
+          mergeOnlineDecksIntoLocal
+            ? onlineDeckSummariesSnapshot
+            : EMPTY_DECK_SUMMARIES,
           offlineSnapshot?.summaries ?? EMPTY_DECK_SUMMARIES
         ),
         pendingDeletedDeckIds
       ),
     [
+      mergeOnlineDecksIntoLocal,
       offlineSnapshot?.summaries,
       onlineDeckSummariesSnapshot,
       pendingDeletedDeckIds,
@@ -134,38 +244,82 @@ export function useDecks(options: UseDecksOptions = {}) {
   const offlineDecks = useMemo(
     () =>
       filterDeletedDecks(
-        mergeDeckLists(onlineDecksSnapshot, offlineSnapshot?.decks ?? []),
+        mergeDeckLists(
+          mergeOnlineDecksIntoLocal ? onlineDecksSnapshot : [],
+          offlineSnapshot?.decks ?? []
+        ),
         pendingDeletedDeckIds
       ),
-    [offlineSnapshot?.decks, onlineDecksSnapshot, pendingDeletedDeckIds]
+    [
+      mergeOnlineDecksIntoLocal,
+      offlineSnapshot?.decks,
+      onlineDecksSnapshot,
+      pendingDeletedDeckIds,
+    ]
   );
   const onlineDeckSummaries =
     deckSummariesResult ?? onlineDeckSummariesSnapshot;
-  const deckSummaries = offlineActive
-    ? offlineDeckSummaries
+  const visibleOfflineDeckSummaries = useMemo(() => {
+    if (!anonymousDecksActive) return offlineDeckSummaries;
+    const preferredId = offlineSnapshot?.activeId;
+    const selectedSummary =
+      (preferredId
+        ? offlineDeckSummaries.find((deck) => deck.id === preferredId)
+        : undefined) ??
+      offlineDeckSummaries[0] ??
+      anonymousStarterSummary;
+    return [selectedSummary];
+  }, [
+    anonymousDecksActive,
+    anonymousStarterSummary,
+    offlineDeckSummaries,
+    offlineSnapshot?.activeId,
+  ]);
+  const deckSummaries = localDecksActive
+    ? visibleOfflineDeckSummaries
     : onlineDeckSummaries;
   const deckSummariesLoaded =
-    offlineActive || !auth.isAuthenticated || deckSummariesResult !== undefined;
-  const [selectedActiveId, setSelectedActiveId] = useState<string | null>(null);
-  const activeId = useMemo(
+    localDecksActive
+      ? offlineDecksLoaded
+      : !auth.isAuthenticated || deckSummariesResult !== undefined;
+  const savedActiveId = useMemo(
     () =>
       validActiveId(
         deckSummaries,
-        selectedActiveId ?? (offlineActive ? offlineSnapshot?.activeId ?? null : null)
+        selectedActiveId ??
+          (localDecksActive ? offlineSnapshot?.activeId ?? null : null)
       ),
-    [deckSummaries, offlineActive, offlineSnapshot?.activeId, selectedActiveId]
+    [deckSummaries, localDecksActive, offlineSnapshot?.activeId, selectedActiveId]
   );
   const activeDeckResult = useQuery(
     api.decks.get,
-    auth.isAuthenticated && activeId && !offlineActive
-      ? { deckId: activeId }
+    auth.isAuthenticated && savedActiveId && !localDecksActive
+      ? { deckId: savedActiveId }
       : "skip"
   );
+  const visibleOfflineDecks = useMemo(() => {
+    if (!anonymousDecksActive) return offlineDecks;
+    const selectedDeck =
+      (savedActiveId
+        ? offlineDecks.find((deck) => deck.id === savedActiveId)
+        : undefined) ??
+      offlineDecks[0] ??
+      anonymousStarterDeck;
+    return [selectedDeck];
+  }, [savedActiveId, anonymousDecksActive, anonymousStarterDeck, offlineDecks]);
   const activeDeckRef = useRef<Deck | null>(null);
   const activeIdRef = useRef<string | null>(null);
-  const activeDeck = offlineActive
-    ? offlineDecks.find((deck) => deck.id === activeId) ?? null
+  const temporaryDeck = temporaryDeckResult
+    ? withDeckCounts(temporaryDeckResult as PublicDeck)
+    : null;
+  const savedActiveDeck = localDecksActive
+    ? visibleOfflineDecks.find((deck) => deck.id === savedActiveId) ?? null
     : activeDeckResult;
+  const activeDeck = viewingTemporaryDeck ? temporaryDeck : savedActiveDeck;
+  const activeId = viewingTemporaryDeck
+    ? temporaryDeck?.id ??
+      (temporaryPublicDeckId ? `public:${temporaryPublicDeckId}` : null)
+    : savedActiveId;
   const allKnownOnlineDecks = useMemo(
     () =>
       mergeDeckLists(
@@ -180,6 +334,7 @@ export function useDecks(options: UseDecksOptions = {}) {
   const renameMutation = useMutation(api.decks.rename);
   const setFormatMutation = useMutation(api.decks.setFormat);
   const deleteMutation = useMutation(api.decks.deleteDeck);
+  const setPublicMutation = useMutation(api.decks.setPublic);
   const addCardMutation = useMutation(api.decks.addCard);
   const setQuantityMutation = useMutation(api.decks.setQuantity);
   const moveCardMutation = useMutation(api.decks.moveCard);
@@ -188,12 +343,22 @@ export function useDecks(options: UseDecksOptions = {}) {
   const importEntriesMutation = useMutation(api.decks.importEntries);
   const replaceDeckMutation = useMutation(api.decks.replaceDeck);
   const patchCardDataMutation = useMutation(api.decks.patchCardData);
+  const recordPublicDeckViewMutation = useMutation(
+    api.decks.recordPublicDeckView
+  );
 
   const [past, setPast] = useState<Snapshot[]>([]);
   const [future, setFuture] = useState<Snapshot[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const viewedPublicDeckIdsRef = useRef<Set<string>>(new Set());
+
+  const setDefaultDeckPublic = useCallback((isPublic: boolean) => {
+    setDefaultDeckPublicState(isPublic);
+    writeDefaultDeckPublic(isPublic);
+  }, []);
+
   useEffect(() => {
-    if (!offlineEnabled) {
+    if (!deckCacheEnabled) {
       return;
     }
     let alive = true;
@@ -207,7 +372,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     return () => {
       alive = false;
     };
-  }, [offlineEnabled]);
+  }, [deckCacheEnabled]);
 
   useEffect(() => {
     activeDeckRef.current = activeDeck ?? null;
@@ -215,7 +380,22 @@ export function useDecks(options: UseDecksOptions = {}) {
   }, [activeDeck, activeId]);
 
   useEffect(() => {
-    if (offlineActive || deckSummariesResult === undefined) return;
+    if (!temporaryPublicDeckId || temporaryDeckResult === undefined) return;
+    if (temporaryDeckResult === null) return;
+    if (viewedPublicDeckIdsRef.current.has(temporaryPublicDeckId)) return;
+
+    viewedPublicDeckIdsRef.current.add(temporaryPublicDeckId);
+    void recordPublicDeckViewMutation({ publicId: temporaryPublicDeckId }).catch(
+      () => undefined
+    );
+  }, [
+    recordPublicDeckViewMutation,
+    temporaryDeckResult,
+    temporaryPublicDeckId,
+  ]);
+
+  useEffect(() => {
+    if (localDecksActive || deckSummariesResult === undefined) return;
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setOnlineDeckSummariesSnapshot(deckSummariesResult);
@@ -223,10 +403,10 @@ export function useDecks(options: UseDecksOptions = {}) {
     return () => {
       cancelled = true;
     };
-  }, [deckSummariesResult, offlineActive]);
+  }, [deckSummariesResult, localDecksActive]);
 
   useEffect(() => {
-    if (offlineActive || fullDecksResult === undefined) return;
+    if (localDecksActive || fullDecksResult === undefined) return;
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) setOnlineDecksSnapshot(fullDecksResult);
@@ -234,10 +414,10 @@ export function useDecks(options: UseDecksOptions = {}) {
     return () => {
       cancelled = true;
     };
-  }, [fullDecksResult, offlineActive]);
+  }, [fullDecksResult, localDecksActive]);
 
   useEffect(() => {
-    if (offlineActive || !activeDeckResult) return;
+    if (localDecksActive || !activeDeckResult) return;
     let cancelled = false;
     queueMicrotask(() => {
       if (!cancelled) {
@@ -249,13 +429,17 @@ export function useDecks(options: UseDecksOptions = {}) {
     return () => {
       cancelled = true;
     };
-  }, [activeDeckResult, offlineActive]);
+  }, [activeDeckResult, localDecksActive]);
 
   useEffect(() => {
-    if (!offlineEnabled || offlineActive || !deckSummariesLoaded) return;
+    if (!offlineEnabled || localDecksActive || !deckSummariesLoaded) return;
     let cancelled = false;
     async function saveSnapshot() {
-      await saveOfflineDeckSnapshot(deckSummaries, allKnownOnlineDecks, activeId);
+      await saveOfflineDeckSnapshot(
+        deckSummaries,
+        allKnownOnlineDecks,
+        savedActiveId
+      );
       const snapshot = await loadOfflineDeckSnapshot();
       if (!cancelled) setOfflineSnapshot(snapshot);
     }
@@ -264,16 +448,16 @@ export function useDecks(options: UseDecksOptions = {}) {
       cancelled = true;
     };
   }, [
-    activeId,
     allKnownOnlineDecks,
     deckSummaries,
     deckSummariesLoaded,
-    offlineActive,
     offlineEnabled,
+    localDecksActive,
+    savedActiveId,
   ]);
 
   useEffect(() => {
-    if (!offlineEnabled || !offlineActive) return;
+    if (!deckCacheEnabled || !localDecksActive) return;
     let cancelled = false;
     loadOfflineDeckSnapshot()
       .then((snapshot) => {
@@ -285,7 +469,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     return () => {
       cancelled = true;
     };
-  }, [offlineActive, offlineEnabled]);
+  }, [deckCacheEnabled, localDecksActive]);
 
   useEffect(() => {
     if (!notice) return;
@@ -293,12 +477,16 @@ export function useDecks(options: UseDecksOptions = {}) {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  const temporaryDeckLoaded =
+    !viewingTemporaryDeck || temporaryDeckResult !== undefined;
   const hydrated =
-    offlineActive
+    (localDecksActive
       ? offlineDecksLoaded
       : !auth.isLoading &&
         (!auth.isAuthenticated ||
-          (deckSummariesLoaded && (!activeId || activeDeck !== undefined)));
+          (deckSummariesLoaded &&
+            (!savedActiveId || savedActiveDeck !== undefined)))) &&
+    temporaryDeckLoaded;
 
   const decks = useMemo(
     () =>
@@ -325,6 +513,20 @@ export function useDecks(options: UseDecksOptions = {}) {
       `${cardName ?? "That card"} is limited to ${CARD_QUANTITY_LIMIT} copies per deck.`
     );
   }, []);
+
+  const showTemporaryDeckNotice = useCallback(() => {
+    setNotice("Copy this temporary deck before making changes.");
+  }, []);
+
+  const canEditDeck = useCallback(
+    (deckId: string) => {
+      const isTemporaryId = deckId.startsWith("public:");
+      if (!isTemporaryId) return true;
+      showTemporaryDeckNotice();
+      return false;
+    },
+    [showTemporaryDeckNotice]
+  );
 
   const reloadOfflineSnapshot = useCallback(async () => {
     const snapshot = await loadOfflineDeckSnapshot();
@@ -354,7 +556,7 @@ export function useDecks(options: UseDecksOptions = {}) {
   );
 
   useEffect(() => {
-    if (!offlineEnabled || offlineActive || !online || !auth.isAuthenticated) {
+    if (offlineActive || !online || !auth.isAuthenticated) {
       return;
     }
     let cancelled = false;
@@ -380,7 +582,11 @@ export function useDecks(options: UseDecksOptions = {}) {
           if (cancelled) return;
           const deck = snapshot.decks.find((candidate) => candidate.id === deckId);
           if (!deck) continue;
-          await createMutation({ deckId: deck.id, name: deck.name });
+          await createMutation({
+            deckId: deck.id,
+            name: deck.name,
+            isPublic: deck.isPublic,
+          });
           await replaceDeckMutation({ deck });
           syncedIds.push(deck.id);
         }
@@ -404,7 +610,6 @@ export function useDecks(options: UseDecksOptions = {}) {
     createMutation,
     deleteMutation,
     offlineActive,
-    offlineEnabled,
     onOfflineSyncingChange,
     online,
     reloadOfflineSnapshot,
@@ -435,20 +640,20 @@ export function useDecks(options: UseDecksOptions = {}) {
 
   const createDeck = useCallback(
     async (name?: string) => {
-      if (offlineActive) {
-        const now = Date.now();
+      if (anonymousDecksActive) {
+        setNotice(
+          "You need to log in or create a free account to create another deck."
+        );
+        return activeIdRef.current;
+      }
+
+      if (localDecksActive) {
         const deckId = uid();
-        const deck: Deck = {
-          id: deckId,
-          name: name || "Untitled Deck",
-          format: "commander",
-          cardCount: 0,
-          sideboardCount: 0,
-          createdAt: now,
-          updatedAt: now,
-          entries: [],
-          sideboard: [],
-        };
+        const deck = createEmptyDeck(
+          deckId,
+          name || "Untitled Deck",
+          defaultDeckPublic
+        );
         await writeOfflineDeck(deck);
         await setOfflineActiveDeck(deckId);
         setSelectedActiveId(deckId);
@@ -461,24 +666,41 @@ export function useDecks(options: UseDecksOptions = {}) {
       const createdId = await createMutation({
         deckId,
         name: name || "Untitled Deck",
+        isPublic: defaultDeckPublic,
       });
       setSelectedActiveId(createdId);
       return createdId;
     },
-    [auth.isAuthenticated, createMutation, offlineActive, writeOfflineDeck]
+    [
+      anonymousDecksActive,
+      auth.isAuthenticated,
+      createMutation,
+      defaultDeckPublic,
+      localDecksActive,
+      writeOfflineDeck,
+    ]
   );
 
   const setActive = useCallback(
     (id: string) => {
       setSelectedActiveId(id);
-      if (offlineActive) void setOfflineActiveDeck(id);
+      if (localDecksActive) void setOfflineActiveDeck(id);
     },
-    [offlineActive]
+    [localDecksActive]
   );
 
   const renameDeck = useCallback(
     async (id: string, name: string) => {
-      if (offlineActive) {
+      if (!canEditDeck(id)) return;
+
+      if (anonymousDecksActive) {
+        setNotice(
+          "You need to log in or create a free account to name and save this deck."
+        );
+        return;
+      }
+
+      if (localDecksActive) {
         await updateOfflineDeck(id, (deck) => ({
           ...deck,
           name: name.trim() || deck.name,
@@ -489,12 +711,21 @@ export function useDecks(options: UseDecksOptions = {}) {
       if (!auth.isAuthenticated) return;
       await renameMutation({ deckId: id, name });
     },
-    [auth.isAuthenticated, offlineActive, renameMutation, updateOfflineDeck]
+    [
+      anonymousDecksActive,
+      auth.isAuthenticated,
+      canEditDeck,
+      localDecksActive,
+      renameMutation,
+      updateOfflineDeck,
+    ]
   );
 
   const setFormat = useCallback(
     async (id: string, format: string) => {
-      if (offlineActive) {
+      if (!canEditDeck(id)) return;
+
+      if (localDecksActive) {
         await updateOfflineDeck(id, (deck) => ({
           ...deck,
           format,
@@ -505,12 +736,27 @@ export function useDecks(options: UseDecksOptions = {}) {
       if (!auth.isAuthenticated) return;
       await setFormatMutation({ deckId: id, format });
     },
-    [auth.isAuthenticated, offlineActive, setFormatMutation, updateOfflineDeck]
+    [
+      auth.isAuthenticated,
+      canEditDeck,
+      localDecksActive,
+      setFormatMutation,
+      updateOfflineDeck,
+    ]
   );
 
   const deleteDeck = useCallback(
     async (id: string) => {
-      if (offlineActive) {
+      if (!canEditDeck(id)) return;
+
+      if (anonymousDecksActive) {
+        setNotice(
+          "You need to log in or create a free account to manage saved decks."
+        );
+        return;
+      }
+
+      if (localDecksActive) {
         await deleteOfflineDeck(id);
         const snapshot = await reloadOfflineSnapshot();
         if (activeIdRef.current === id) {
@@ -526,11 +772,48 @@ export function useDecks(options: UseDecksOptions = {}) {
         setSelectedActiveId(null);
       }
     },
-    [auth.isAuthenticated, deleteMutation, offlineActive, reloadOfflineSnapshot]
+    [
+      anonymousDecksActive,
+      auth.isAuthenticated,
+      canEditDeck,
+      deleteMutation,
+      localDecksActive,
+      reloadOfflineSnapshot,
+    ]
+  );
+
+  const setDeckPublic = useCallback(
+    async (id: string, isPublic: boolean) => {
+      if (!canEditDeck(id)) return;
+
+      if (anonymousDecksActive) {
+        setNotice(
+          "You need to log in or create a free account to publish this deck."
+        );
+        return;
+      }
+
+      if (localDecksActive) {
+        setNotice("Publishing is available when cloud sync is online.");
+        return;
+      }
+
+      if (!auth.isAuthenticated) return;
+      await setPublicMutation({ deckId: id, isPublic });
+    },
+    [
+      anonymousDecksActive,
+      auth.isAuthenticated,
+      canEditDeck,
+      localDecksActive,
+      setPublicMutation,
+    ]
   );
 
   const addCard = useCallback(
     async (deckId: string, card: ScryfallCard, quantity = 1) => {
+      if (!canEditDeck(deckId)) return;
+
       const deck = activeDeckRef.current;
       const current = deck?.entries.find((entry) => entry.cardId === card.id);
       const requestedQuantity = Math.max(1, Math.floor(quantity));
@@ -547,7 +830,7 @@ export function useDecks(options: UseDecksOptions = {}) {
       }
 
       recordActiveSnapshot();
-      if (offlineActive) {
+      if (localDecksActive) {
         await updateOfflineDeck(deckId, (currentDeck) => {
           const entries = currentDeck.entries.map((entry) => ({ ...entry }));
           const existing = entries.find((entry) => entry.cardId === card.id);
@@ -578,7 +861,8 @@ export function useDecks(options: UseDecksOptions = {}) {
     [
       addCardMutation,
       auth.isAuthenticated,
-      offlineActive,
+      canEditDeck,
+      localDecksActive,
       recordActiveSnapshot,
       showQuantityLimit,
       updateOfflineDeck,
@@ -592,9 +876,12 @@ export function useDecks(options: UseDecksOptions = {}) {
       quantity: number,
       zone: DeckZone = "main"
     ) => {
+      if (!canEditDeck(deckId)) return;
+
       const activeDeck = activeDeckRef.current;
-      const zoneEntries =
-        zone === "sideboard" ? activeDeck?.sideboard : activeDeck?.entries;
+      const zoneEntries = activeDeck
+        ? deckEntriesForZone(activeDeck, zone)
+        : undefined;
       const current = zoneEntries?.find((entry) => entry.cardId === cardId);
       const safeQuantity =
         quantity <= 0
@@ -607,10 +894,10 @@ export function useDecks(options: UseDecksOptions = {}) {
       if (current && current.quantity === safeQuantity) return;
 
       recordActiveSnapshot();
-      if (offlineActive) {
+      if (localDecksActive) {
         await updateOfflineDeck(deckId, (deck) => ({
           ...deck,
-          [zone === "sideboard" ? "sideboard" : "entries"]:
+          [deckZoneKey(zone)]:
             safeQuantity <= 0
               ? deckEntriesForZone(deck, zone).filter(
                   (entry) => entry.cardId !== cardId
@@ -640,7 +927,8 @@ export function useDecks(options: UseDecksOptions = {}) {
     },
     [
       auth.isAuthenticated,
-      offlineActive,
+      canEditDeck,
+      localDecksActive,
       recordActiveSnapshot,
       setQuantityMutation,
       showQuantityLimit,
@@ -649,30 +937,37 @@ export function useDecks(options: UseDecksOptions = {}) {
   );
 
   const moveCard = useCallback(
-    async (deckId: string, cardId: string, to: DeckZone) => {
+    async (
+      deckId: string,
+      cardId: string,
+      from: DeckZone,
+      to: DeckZone
+    ) => {
+      if (!canEditDeck(deckId)) return;
+
       const deck = activeDeckRef.current;
-      if (!deck) return;
-      const from: DeckZone = to === "sideboard" ? "main" : "sideboard";
+      if (!deck || from === to) return;
       const moving = deckEntriesForZone(deck, from).find(
         (entry) => entry.cardId === cardId
       );
       if (!moving) return;
 
       recordActiveSnapshot();
-      if (offlineActive) {
+      if (localDecksActive) {
         await updateOfflineDeck(deckId, (currentDeck) =>
-          moveEntryBetweenZones(currentDeck, cardId, to)
+          moveEntryBetweenZones(currentDeck, cardId, from, to)
         );
         return;
       }
 
       if (!auth.isAuthenticated) return;
-      await moveCardMutation({ deckId, cardId, to });
+      await moveCardMutation({ deckId, cardId, from, to });
     },
     [
       auth.isAuthenticated,
+      canEditDeck,
       moveCardMutation,
-      offlineActive,
+      localDecksActive,
       recordActiveSnapshot,
       updateOfflineDeck,
     ]
@@ -680,13 +975,15 @@ export function useDecks(options: UseDecksOptions = {}) {
 
   const setCommander = useCallback(
     async (deckId: string, cardId: string | null) => {
+      if (!canEditDeck(deckId)) return;
+
       const currentCommander =
         activeDeckRef.current?.entries.find((entry) => entry.isCommander)
           ?.cardId ?? null;
       if (currentCommander === cardId) return;
 
       recordActiveSnapshot();
-      if (offlineActive) {
+      if (localDecksActive) {
         await updateOfflineDeck(deckId, (deck) => ({
           ...deck,
           entries: deck.entries.map((entry) => ({
@@ -706,7 +1003,8 @@ export function useDecks(options: UseDecksOptions = {}) {
     },
     [
       auth.isAuthenticated,
-      offlineActive,
+      canEditDeck,
+      localDecksActive,
       recordActiveSnapshot,
       setCommanderMutation,
       updateOfflineDeck,
@@ -715,12 +1013,15 @@ export function useDecks(options: UseDecksOptions = {}) {
 
   const clearDeck = useCallback(
     async (deckId: string) => {
+      if (!canEditDeck(deckId)) return;
+
       recordActiveSnapshot();
-      if (offlineActive) {
+      if (localDecksActive) {
         await updateOfflineDeck(deckId, (deck) => ({
           ...deck,
           entries: [],
           sideboard: [],
+          maybeboard: [],
           updatedAt: Date.now(),
         }));
         return;
@@ -731,8 +1032,9 @@ export function useDecks(options: UseDecksOptions = {}) {
     },
     [
       auth.isAuthenticated,
+      canEditDeck,
       clearMutation,
-      offlineActive,
+      localDecksActive,
       recordActiveSnapshot,
       updateOfflineDeck,
     ]
@@ -743,20 +1045,24 @@ export function useDecks(options: UseDecksOptions = {}) {
       deckId: string,
       incoming: DeckEntry[],
       sideboard: DeckEntry[],
+      maybeboard: DeckEntry[],
       mode: "merge" | "replace"
     ) => {
+      if (!canEditDeck(deckId)) return;
+
       if (
         incomingWouldExceedLimit(
           activeDeckRef.current,
           incoming,
           sideboard,
+          maybeboard,
           mode
         )
       ) {
         showQuantityLimit("One or more cards");
       }
       recordActiveSnapshot();
-      if (offlineActive) {
+      if (localDecksActive) {
         await updateOfflineDeck(deckId, (deck) => ({
           ...deck,
           entries:
@@ -767,6 +1073,10 @@ export function useDecks(options: UseDecksOptions = {}) {
             mode === "replace"
               ? normalizeEntries(sideboard, false)
               : mergeEntries(deck.sideboard, sideboard, false),
+          maybeboard:
+            mode === "replace"
+              ? normalizeEntries(maybeboard, false)
+              : mergeEntries(deck.maybeboard, maybeboard, false),
           updatedAt: Date.now(),
         }));
         return;
@@ -777,13 +1087,15 @@ export function useDecks(options: UseDecksOptions = {}) {
         deckId,
         entries: incoming,
         sideboard,
+        maybeboard,
         mode,
       });
     },
     [
       auth.isAuthenticated,
+      canEditDeck,
       importEntriesMutation,
-      offlineActive,
+      localDecksActive,
       recordActiveSnapshot,
       showQuantityLimit,
       updateOfflineDeck,
@@ -792,44 +1104,58 @@ export function useDecks(options: UseDecksOptions = {}) {
 
   const refreshCardData = useCallback(
     async (deckId: string) => {
+      if (!canEditDeck(deckId)) return;
+
       const deck = activeDeckRef.current;
       if (!deck || deck.id !== deckId) return;
 
-      const needIds = [...deck.entries, ...(deck.sideboard ?? [])]
+      const needIds = [
+        ...deck.entries,
+        ...(deck.sideboard ?? []),
+        ...(deck.maybeboard ?? []),
+      ]
         .filter(
           (entry) => entry.priceUsd === undefined || entry.rarity === undefined
         )
         .map((entry) => entry.cardId);
       if (needIds.length === 0) return;
 
-      if (offlineActive) {
-        const { getOfflineCardsByIdentifiers } = await import("./offline");
-        const cards = await getOfflineCardsByIdentifiers(
-          needIds.map((id) => ({ id }))
-        );
-        if (cards.length === 0) return;
-        const cardsById = new Map(cards.map((card) => [card.id, card]));
-        const hydrateEntry = (entry: DeckEntry) => {
-          const card = cardsById.get(entry.cardId);
-          if (!card) return entry;
-          const usd = card.prices?.usd;
-          const priceUsd = usd != null && usd !== "" ? Number(usd) : undefined;
-          return {
-            ...entry,
-            rarity: entry.rarity ?? card.rarity,
-            priceUsd:
-              entry.priceUsd ??
-              (Number.isFinite(priceUsd) ? priceUsd : undefined),
+      if (localDecksActive) {
+        try {
+          const cards = offlineActive
+            ? await import("./offline").then(({ getOfflineCardsByIdentifiers }) =>
+                getOfflineCardsByIdentifiers(needIds.map((id) => ({ id })))
+              )
+            : await getCardsByIdentifiers(needIds.map((id) => ({ id })));
+          if (cards.length === 0) return;
+          const cardsById = new Map(cards.map((card) => [card.id, card]));
+          const hydrateEntry = (entry: DeckEntry) => {
+            const card = cardsById.get(entry.cardId);
+            if (!card) return entry;
+            const usd = card.prices?.usd;
+            const priceUsd = usd != null && usd !== "" ? Number(usd) : undefined;
+            return {
+              ...entry,
+              rarity: entry.rarity ?? card.rarity,
+              priceUsd:
+                entry.priceUsd ??
+                (Number.isFinite(priceUsd) ? priceUsd : undefined),
+            };
           };
-        };
-        await updateOfflineDeck(deckId, (currentDeck) => ({
-          ...currentDeck,
-          entries: currentDeck.entries.map(hydrateEntry),
-          sideboard: deckEntriesForZone(currentDeck, "sideboard").map(
-            hydrateEntry
-          ),
-          updatedAt: Date.now(),
-        }));
+          await updateOfflineDeck(deckId, (currentDeck) => ({
+            ...currentDeck,
+            entries: currentDeck.entries.map(hydrateEntry),
+            sideboard: deckEntriesForZone(currentDeck, "sideboard").map(
+              hydrateEntry
+            ),
+            maybeboard: deckEntriesForZone(currentDeck, "maybeboard").map(
+              hydrateEntry
+            ),
+            updatedAt: Date.now(),
+          }));
+        } catch {
+          // Network or offline-cache errors leave metadata unknown for now.
+        }
         return;
       }
 
@@ -859,15 +1185,76 @@ export function useDecks(options: UseDecksOptions = {}) {
         // Network errors leave card metadata unknown until a later refresh.
       }
     },
-    [auth.isAuthenticated, offlineActive, patchCardDataMutation, updateOfflineDeck]
+    [
+      auth.isAuthenticated,
+      canEditDeck,
+      localDecksActive,
+      offlineActive,
+      patchCardDataMutation,
+      updateOfflineDeck,
+    ]
   );
+
+  const copyTemporaryDeck = useCallback(async () => {
+    const source = activeDeckRef.current;
+    if (!source || !source.id.startsWith("public:")) {
+      return null;
+    }
+
+    if (anonymousDecksActive) {
+      setNotice(
+        "You need to log in or create a free account to copy this deck."
+      );
+      return null;
+    }
+
+    const deckId = uid();
+    const now = Date.now();
+    const name = `${source.name} Copy`;
+    const copied = withDeckCounts({
+      ...cloneDeck(source),
+      id: deckId,
+      publicId: undefined,
+      isPublic: defaultDeckPublic,
+      name,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    if (localDecksActive) {
+      await writeOfflineDeck(copied);
+      await setOfflineActiveDeck(deckId);
+      setSelectedActiveId(deckId);
+      setNotice(`Copied ${source.name}.`);
+      return deckId;
+    }
+
+    if (!auth.isAuthenticated) return null;
+    await createMutation({
+      deckId,
+      name,
+      isPublic: defaultDeckPublic,
+    });
+    await replaceDeckMutation({ deck: copied });
+    setSelectedActiveId(deckId);
+    setNotice(`Copied ${source.name}.`);
+    return deckId;
+  }, [
+    anonymousDecksActive,
+    auth.isAuthenticated,
+    createMutation,
+    defaultDeckPublic,
+    localDecksActive,
+    replaceDeckMutation,
+    writeOfflineDeck,
+  ]);
 
   const undo = useCallback(async () => {
     const prev = past[past.length - 1];
     const current = activeDeckRef.current;
     const currentActiveId = activeIdRef.current;
     if (!prev || !current || !currentActiveId) return;
-    if (!offlineActive && !auth.isAuthenticated) return;
+    if (!localDecksActive && !auth.isAuthenticated) return;
 
     setPast((p) => p.slice(0, -1));
     setFuture((f) =>
@@ -876,12 +1263,12 @@ export function useDecks(options: UseDecksOptions = {}) {
         MAX_HISTORY
       )
     );
-    if (offlineActive) await writeOfflineDeck(prev.deck);
+    if (localDecksActive) await writeOfflineDeck(prev.deck);
     else await replaceDeckMutation({ deck: prev.deck });
     setSelectedActiveId(prev.activeId);
   }, [
     auth.isAuthenticated,
-    offlineActive,
+    localDecksActive,
     past,
     replaceDeckMutation,
     writeOfflineDeck,
@@ -892,7 +1279,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     const current = activeDeckRef.current;
     const currentActiveId = activeIdRef.current;
     if (!next || !current || !currentActiveId) return;
-    if (!offlineActive && !auth.isAuthenticated) return;
+    if (!localDecksActive && !auth.isAuthenticated) return;
 
     setFuture((f) => f.slice(1));
     setPast((p) =>
@@ -900,22 +1287,40 @@ export function useDecks(options: UseDecksOptions = {}) {
         -MAX_HISTORY
       )
     );
-    if (offlineActive) await writeOfflineDeck(next.deck);
+    if (localDecksActive) await writeOfflineDeck(next.deck);
     else await replaceDeckMutation({ deck: next.deck });
     setSelectedActiveId(next.activeId);
   }, [
     auth.isAuthenticated,
     future,
-    offlineActive,
+    localDecksActive,
     replaceDeckMutation,
     writeOfflineDeck,
   ]);
 
+  const activeDeckIsTemporary = activeDeck?.id.startsWith("public:") === true;
+
   return {
     hydrated,
-    isAuthenticated: auth.isAuthenticated || offlineActive,
+    isAuthenticated: auth.isAuthenticated || localDecksActive,
+    isSignedIn: auth.isAuthenticated,
+    isLocal: localDecksActive,
+    isAnonymous: anonymousDecksActive,
+    canCreateDeck: auth.isAuthenticated || offlineActive,
+    canRenameDeck: !activeDeckIsTemporary && (auth.isAuthenticated || offlineActive),
+    canDeleteDeck: auth.isAuthenticated || offlineActive,
+    canToggleDeckPublic:
+      !activeDeckIsTemporary && auth.isAuthenticated && !localDecksActive,
+    canEditActiveDeck: !activeDeckIsTemporary,
+    canCopyTemporaryDeck: activeDeckIsTemporary,
+    activeDeckIsTemporary,
+    temporaryDeckNotFound:
+      viewingTemporaryDeck && temporaryDeckResult === null,
     isLoading: auth.isLoading,
+    defaultDeckPublic,
+    setDefaultDeckPublic,
     notice,
+    showNotice: setNotice,
     clearNotice: () => setNotice(null),
     decks,
     activeDeck: activeDeck ?? null,
@@ -925,6 +1330,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     renameDeck,
     setFormat,
     deleteDeck,
+    setDeckPublic,
     addCard,
     setQuantity,
     moveCard,
@@ -932,26 +1338,54 @@ export function useDecks(options: UseDecksOptions = {}) {
     clearDeck,
     importEntries,
     refreshCardData,
+    copyTemporaryDeck,
     undo,
     redo,
-    canUndo: past.length > 0,
-    canRedo: future.length > 0,
+    canUndo: !activeDeckIsTemporary && past.length > 0,
+    canRedo: !activeDeckIsTemporary && future.length > 0,
   };
 }
 
 export function useDeck(deckId: string | null) {
   const auth = useConvexAuth();
+  const localDecksActive = !auth.isLoading && !auth.isAuthenticated;
+  const [offlineSnapshot, setOfflineSnapshot] =
+    useState<OfflineDeckSnapshot | null>(null);
   const deck = useQuery(
     api.decks.get,
     auth.isAuthenticated && deckId ? { deckId } : "skip"
   );
+  const localDeck =
+    localDecksActive && deckId
+      ? offlineSnapshot?.decks.find((candidate) => candidate.id === deckId) ??
+        null
+      : null;
+
+  useEffect(() => {
+    if (!localDecksActive || !deckId) return;
+    let cancelled = false;
+    loadOfflineDeckSnapshot()
+      .then((snapshot) => {
+        if (!cancelled) setOfflineSnapshot(snapshot);
+      })
+      .catch(() => {
+        if (!cancelled) setOfflineSnapshot(EMPTY_OFFLINE_SNAPSHOT);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deckId, localDecksActive]);
 
   return {
     hydrated:
       !auth.isLoading &&
-      (!auth.isAuthenticated || !deckId || deck !== undefined),
-    isAuthenticated: auth.isAuthenticated,
-    deck: deck ?? null,
+      (!deckId ||
+        (auth.isAuthenticated
+          ? deck !== undefined
+          : offlineSnapshot !== null)),
+    isAuthenticated: auth.isAuthenticated || localDecksActive,
+    isSignedIn: auth.isAuthenticated,
+    deck: auth.isAuthenticated ? deck ?? null : localDeck,
   };
 }
 
@@ -1002,11 +1436,13 @@ function incomingWouldExceedLimit(
   deck: Deck | null,
   incoming: DeckEntry[],
   sideboard: DeckEntry[],
+  maybeboard: DeckEntry[],
   mode: "merge" | "replace"
 ) {
   return (
     entriesWouldExceedLimit(deck?.entries ?? [], incoming, mode) ||
-    entriesWouldExceedLimit(deck?.sideboard ?? [], sideboard, mode)
+    entriesWouldExceedLimit(deck?.sideboard ?? [], sideboard, mode) ||
+    entriesWouldExceedLimit(deck?.maybeboard ?? [], maybeboard, mode)
   );
 }
 
@@ -1064,11 +1500,22 @@ function mergeEntries(
 }
 
 function deckEntriesForZone(deck: Deck, zone: DeckZone): DeckEntry[] {
-  return zone === "sideboard" ? deck.sideboard ?? [] : deck.entries ?? [];
+  return deck[deckZoneKey(zone)] ?? [];
 }
 
-function moveEntryBetweenZones(deck: Deck, cardId: string, to: DeckZone): Deck {
-  const from: DeckZone = to === "sideboard" ? "main" : "sideboard";
+function deckZoneKey(zone: DeckZone): "entries" | "sideboard" | "maybeboard" {
+  if (zone === "sideboard") return "sideboard";
+  if (zone === "maybeboard") return "maybeboard";
+  return "entries";
+}
+
+function moveEntryBetweenZones(
+  deck: Deck,
+  cardId: string,
+  from: DeckZone,
+  to: DeckZone
+): Deck {
+  if (from === to) return deck;
   const fromEntries = deckEntriesForZone(deck, from);
   const toEntries = deckEntriesForZone(deck, to);
   const moving = fromEntries.find((entry) => entry.cardId === cardId);
@@ -1083,8 +1530,8 @@ function moveEntryBetweenZones(deck: Deck, cardId: string, to: DeckZone): Deck {
 
   return withDeckCounts({
     ...deck,
-    entries: to === "main" ? nextTo : nextFrom,
-    sideboard: to === "sideboard" ? nextTo : nextFrom,
+    [deckZoneKey(from)]: nextFrom,
+    [deckZoneKey(to)]: nextTo,
     updatedAt: Date.now(),
   });
 }

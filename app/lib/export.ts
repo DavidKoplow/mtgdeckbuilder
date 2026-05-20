@@ -81,9 +81,14 @@ function toQuantityNameLines(entries: DeckEntry[]): string {
 }
 
 function toTextLines(deck: Deck): string {
-  const main = toQuantityNameLines(deck.entries);
-  if (deck.sideboard.length === 0) return main;
-  return [main, "Sideboard", toQuantityNameLines(deck.sideboard)]
+  const sections = [toQuantityNameLines(deck.entries)];
+  if (deck.sideboard.length > 0) {
+    sections.push("Sideboard", toQuantityNameLines(deck.sideboard));
+  }
+  if (deck.maybeboard.length > 0) {
+    sections.push("Maybeboard", toQuantityNameLines(deck.maybeboard));
+  }
+  return sections
     .filter(Boolean)
     .join("\n");
 }
@@ -105,6 +110,9 @@ function toMtgaLines(deck: Deck): string {
   if (deck.sideboard.length > 0) {
     body.push(`Sideboard`, toMtgaBody(deck.sideboard));
   }
+  if (deck.maybeboard.length > 0) {
+    body.push(`Maybeboard`, toMtgaBody(deck.maybeboard));
+  }
   return body.filter(Boolean).join("\n");
 }
 
@@ -118,9 +126,14 @@ function toMwsSection(entries: DeckEntry[]): string {
 }
 
 function toMwsLines(deck: Deck): string {
-  const main = toMwsSection(deck.entries);
-  if (deck.sideboard.length === 0) return main;
-  return [main, "Sideboard", toMwsSection(deck.sideboard)]
+  const sections = [toMwsSection(deck.entries)];
+  if (deck.sideboard.length > 0) {
+    sections.push("Sideboard", toMwsSection(deck.sideboard));
+  }
+  if (deck.maybeboard.length > 0) {
+    sections.push("Maybeboard", toMwsSection(deck.maybeboard));
+  }
+  return sections
     .filter(Boolean)
     .join("\n");
 }
@@ -151,6 +164,11 @@ function toMtgoDek(deck: Deck): string {
       `  <Cards CatID="0" Quantity="${e.quantity}" Sideboard="true" Name="${xmlEscape(e.name)}" />`
     );
   }
+  for (const e of sortedEntries(deck.maybeboard)) {
+    lines.push(
+      `  <!-- Maybeboard: ${e.quantity} ${xmlEscape(e.name)} -->`
+    );
+  }
   lines.push("</Deck>");
   return lines.join("\n");
 }
@@ -175,6 +193,9 @@ function toCsv(deck: Deck): string {
     ...sortedEntries(deck.entries).map((entry) => rowFor("Main", entry)),
     ...sortedEntries(deck.sideboard).map((entry) =>
       rowFor("Sideboard", entry)
+    ),
+    ...sortedEntries(deck.maybeboard).map((entry) =>
+      rowFor("Maybeboard", entry)
     ),
   ];
   return [header, ...rows].join("\n");
@@ -225,9 +246,10 @@ async function entriesWithFullCards(entries: DeckEntry[]) {
 }
 
 async function toFullCardJson(deck: Deck): Promise<string> {
-  const [entries, sideboard] = await Promise.all([
+  const [entries, sideboard, maybeboard] = await Promise.all([
     entriesWithFullCards(deck.entries),
     entriesWithFullCards(deck.sideboard),
+    entriesWithFullCards(deck.maybeboard),
   ]);
 
   return JSON.stringify(
@@ -236,10 +258,12 @@ async function toFullCardJson(deck: Deck): Promise<string> {
       format: deck.format,
       cardCount: deck.cardCount,
       sideboardCount: deck.sideboardCount,
+      maybeboardCount: deck.maybeboardCount,
       createdAt: deck.createdAt,
       updatedAt: deck.updatedAt,
       entries,
       sideboard,
+      maybeboard,
     },
     null,
     2
@@ -265,10 +289,12 @@ export function serializeDeck(deck: Deck, format: ExportFormat): string {
           format: deck.format,
           cardCount: deck.cardCount,
           sideboardCount: deck.sideboardCount,
+          maybeboardCount: deck.maybeboardCount,
           createdAt: deck.createdAt,
           updatedAt: deck.updatedAt,
           entries: deck.entries.map(compactEntry),
           sideboard: deck.sideboard.map(compactEntry),
+          maybeboard: deck.maybeboard.map(compactEntry),
         },
         null,
         2

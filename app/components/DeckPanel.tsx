@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Deck, DeckEntry } from "../lib/types";
+import type { Deck, DeckEntry, DeckZone } from "../lib/types";
 import { ManaCost } from "./ManaCost";
 
 type Props = {
   deck: Deck;
+  readOnly?: boolean;
   onSetQty: (cardId: string, qty: number) => void;
   onSetSideboardQty: (cardId: string, qty: number) => void;
-  onMoveCard: (cardId: string, to: BoardView) => void;
+  onSetMaybeboardQty: (cardId: string, qty: number) => void;
+  onMoveCard: (cardId: string, from: BoardView, to: BoardView) => void;
   onSetCommander: (cardId: string, isCommander: boolean) => void;
   onHover: (
     payload: { src?: string; x: number; y: number } | null
@@ -19,9 +21,17 @@ type Props = {
   onRefreshCardData?: () => void;
 };
 
-type BoardView = "main" | "sideboard";
+type BoardView = DeckZone;
 type ViewMode = "grid" | "list";
 type DeckSortMode = "type" | "mana" | "rarity" | "price";
+
+const BOARD_VIEWS: BoardView[] = ["main", "sideboard", "maybeboard"];
+const BOARD_LABELS: Record<BoardView, string> = {
+  main: "Deck",
+  sideboard: "Sideboard",
+  maybeboard: "Maybeboard",
+};
+const EMPTY_DECK_ENTRIES: DeckEntry[] = [];
 
 const TYPE_ORDER = [
   "Creature",
@@ -159,10 +169,16 @@ function buildDisplayGroups(
   return groups;
 }
 
+function countEntries(entries: DeckEntry[]): number {
+  return entries.reduce((n, entry) => n + entry.quantity, 0);
+}
+
 export function DeckPanel({
   deck,
+  readOnly = false,
   onSetQty,
   onSetSideboardQty,
+  onSetMaybeboardQty,
   onMoveCard,
   onSetCommander,
   onHover,
@@ -170,27 +186,27 @@ export function DeckPanel({
   previewCardId = null,
   onRefreshCardData,
 }: Props) {
-  const [boardView, setBoardView] = useState<BoardView>("main");
   const [view, setView] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<DeckSortMode>("type");
   const [statsExpanded, setStatsExpanded] = useState(false);
-  const visibleEntries = boardView === "sideboard" ? deck.sideboard : deck.entries;
-  const mainCount = deck.entries.reduce((n, entry) => n + entry.quantity, 0);
-  const sideboardCount = deck.sideboard.reduce(
-    (n, entry) => n + entry.quantity,
-    0
-  );
-  const setVisibleQty =
-    boardView === "sideboard" ? onSetSideboardQty : onSetQty;
-  const moveTarget: BoardView =
-    boardView === "sideboard" ? "main" : "sideboard";
+  const mainEntries = deck.entries ?? EMPTY_DECK_ENTRIES;
+  const sideboardEntries = deck.sideboard ?? EMPTY_DECK_ENTRIES;
+  const maybeboardEntries = deck.maybeboard ?? EMPTY_DECK_ENTRIES;
+  const mainCount = countEntries(mainEntries);
+  const sideboardCount = countEntries(sideboardEntries);
+  const maybeboardCount = countEntries(maybeboardEntries);
+  const hasAnyEntries = mainCount + sideboardCount + maybeboardCount > 0;
 
   // Track which card IDs we've already tried to hydrate in this session so we
   // don't spam Scryfall for cards that genuinely have no listed metadata.
   const triedCardDataRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!onRefreshCardData) return;
-    const allEntries = [...deck.entries, ...deck.sideboard];
+    const allEntries = [
+      ...mainEntries,
+      ...sideboardEntries,
+      ...maybeboardEntries,
+    ];
     const novel = allEntries.some(
       (e) =>
         (e.priceUsd === undefined || e.rarity === undefined) &&
@@ -203,14 +219,23 @@ export function DeckPanel({
       }
     }
     onRefreshCardData();
-  }, [deck.entries, deck.sideboard, onRefreshCardData]);
+  }, [mainEntries, sideboardEntries, maybeboardEntries, onRefreshCardData]);
 
-  const { groups, totalCount, curve, colorPips, totalPrice, topExpensive, pricedCount } = useMemo(() => {
-    const displayGroups = buildDisplayGroups(visibleEntries, sortMode);
-    const totalCount = visibleEntries.reduce((n, e) => n + e.quantity, 0);
+  const {
+    mainGroups,
+    sideboardGroups,
+    maybeboardGroups,
+    totalCount,
+    curve,
+    colorPips,
+    totalPrice,
+    topExpensive,
+    pricedCount,
+  } = useMemo(() => {
+    const totalCount = mainEntries.reduce((n, e) => n + e.quantity, 0);
 
     const curveBuckets = [0, 0, 0, 0, 0, 0, 0, 0];
-    for (const e of visibleEntries) {
+    for (const e of mainEntries) {
       if ((e.typeLine ?? "").includes("Land")) continue;
       const cmc = Math.max(0, Math.round(e.cmc ?? 0));
       const idx = Math.min(7, cmc);
@@ -218,7 +243,7 @@ export function DeckPanel({
     }
 
     const colorPips = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
-    for (const e of visibleEntries) {
+    for (const e of mainEntries) {
       const colors = e.colors ?? [];
       if (colors.length === 0) colorPips.C += e.quantity;
       for (const c of colors) {
@@ -228,20 +253,22 @@ export function DeckPanel({
 
     let totalPrice = 0;
     let pricedCount = 0;
-    for (const e of visibleEntries) {
+    for (const e of mainEntries) {
       if (typeof e.priceUsd === "number") {
         totalPrice += e.priceUsd * e.quantity;
         pricedCount += e.quantity;
       }
     }
-    const topExpensive = visibleEntries
+    const topExpensive = mainEntries
       .filter((e) => typeof e.priceUsd === "number")
       .slice()
       .sort((a, b) => (b.priceUsd ?? 0) - (a.priceUsd ?? 0))
       .slice(0, 3);
 
     return {
-      groups: displayGroups,
+      mainGroups: buildDisplayGroups(mainEntries, sortMode),
+      sideboardGroups: buildDisplayGroups(sideboardEntries, sortMode),
+      maybeboardGroups: buildDisplayGroups(maybeboardEntries, sortMode),
       totalCount,
       curve: curveBuckets,
       colorPips,
@@ -249,7 +276,7 @@ export function DeckPanel({
       topExpensive,
       pricedCount,
     };
-  }, [visibleEntries, sortMode]);
+  }, [mainEntries, sideboardEntries, maybeboardEntries, sortMode]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -257,10 +284,11 @@ export function DeckPanel({
         <div className="flex min-w-0 items-center justify-between gap-2 lg:mr-1">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-text">
-              {boardView === "sideboard" ? "Sideboard" : "Main Deck"}
+              Deck
             </div>
             <div className="truncate text-xs tabular-nums text-text-subtle">
-              {mainCount} main · {sideboardCount} sideboard
+              {mainCount} main · {sideboardCount} sideboard ·{" "}
+              {maybeboardCount} maybe
             </div>
           </div>
           <button
@@ -274,90 +302,192 @@ export function DeckPanel({
           </button>
         </div>
         <div
-          className={`min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 lg:flex lg:min-w-[11rem] lg:flex-1 lg:gap-x-4 lg:gap-y-2 ${
+          className={`min-w-0 flex-col items-start gap-1.5 lg:flex lg:min-w-[11rem] lg:flex-1 lg:gap-1.5 ${
             statsExpanded ? "flex" : "hidden"
           }`}
         >
-          <ColorBar pips={colorPips} />
           <ManaCurve curve={curve} />
+          <ColorBar pips={colorPips} />
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 lg:gap-2">
           <PriceSummary
             totalPrice={totalPrice}
             topExpensive={topExpensive}
             totalCount={totalCount}
             pricedCount={pricedCount}
           />
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 lg:gap-2">
-          <BoardToggle boardView={boardView} onChange={setBoardView} />
           <SortSelect sortMode={sortMode} onChange={setSortMode} />
           <ViewToggle view={view} onChange={setView} />
         </div>
       </div>
 
       <div className="thin-scroll min-h-0 flex-1 overflow-y-auto bg-surface">
-        {visibleEntries.length === 0 ? (
+        {!hasAnyEntries ? (
           <div className="flex h-full items-center justify-center p-8 text-center">
             <div className="empty-pill rounded-full px-4 py-2 text-sm text-text-subtle">
-              {boardView === "sideboard" ? "Empty sideboard" : "Empty deck"}
+              Empty deck
             </div>
           </div>
         ) : (
-          <div className={view === "grid" ? "space-y-4 p-4" : "space-y-4 py-2"}>
-            {groups.map(([group, entries]) => (
-              <section key={group}>
-                <header
-                  className={`mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase text-text-muted ${
-                    view === "list" ? "px-4" : ""
-                  }`}
-                >
-                  <span>{group}</span>
-                  <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text-subtle">
-                    {entries.reduce((n, entry) => n + entry.quantity, 0)}
-                  </span>
-                </header>
-                {view === "grid" ? (
-                  <ul className="deck-card-grid grid grid-cols-[repeat(auto-fill,minmax(5.35rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(8.25rem,1fr))] sm:gap-3">
-                    {entries.map((e) => (
-                      <DeckTile
-                        key={e.cardId}
-                        entry={e}
-                        boardView={boardView}
-                        highlighted={previewCardId === e.cardId}
-                        onSetQty={(q) => setVisibleQty(e.cardId, q)}
-                        onSetCommander={(isCommander) =>
-                          onSetCommander(e.cardId, isCommander)
-                        }
-                        onMove={() => onMoveCard(e.cardId, moveTarget)}
-                        onHover={onHover}
-                        onSelect={() => onSelect(e.cardId)}
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <ul className="divide-y divide-border border-y border-border bg-white">
-                    {entries.map((e) => (
-                      <DeckRow
-                        key={e.cardId}
-                        entry={e}
-                        boardView={boardView}
-                        highlighted={previewCardId === e.cardId}
-                        onSetQty={(q) => setVisibleQty(e.cardId, q)}
-                        onSetCommander={(isCommander) =>
-                          onSetCommander(e.cardId, isCommander)
-                        }
-                        onMove={() => onMoveCard(e.cardId, moveTarget)}
-                        onHover={onHover}
-                        onSelect={() => onSelect(e.cardId)}
-                      />
-                    ))}
-                  </ul>
-                )}
-              </section>
-            ))}
+          <div className={view === "grid" ? "space-y-5 p-4" : "space-y-5 py-2"}>
+            {mainCount > 0 && (
+              <DeckBoardSection
+                title="Deck"
+                boardView="main"
+                groups={mainGroups}
+                view={view}
+                readOnly={readOnly}
+                previewCardId={previewCardId}
+                onSetQty={onSetQty}
+                onSetCommander={onSetCommander}
+                onMoveCard={onMoveCard}
+                onHover={onHover}
+                onSelect={onSelect}
+              />
+            )}
+            {sideboardCount > 0 && (
+              <DeckBoardSection
+                title="Sideboard"
+                boardView="sideboard"
+                groups={sideboardGroups}
+                view={view}
+                readOnly={readOnly}
+                previewCardId={previewCardId}
+                onSetQty={onSetSideboardQty}
+                onSetCommander={onSetCommander}
+                onMoveCard={onMoveCard}
+                onHover={onHover}
+                onSelect={onSelect}
+              />
+            )}
+            {maybeboardCount > 0 && (
+              <DeckBoardSection
+                title="Maybeboard"
+                boardView="maybeboard"
+                groups={maybeboardGroups}
+                view={view}
+                readOnly={readOnly}
+                previewCardId={previewCardId}
+                onSetQty={onSetMaybeboardQty}
+                onSetCommander={onSetCommander}
+                onMoveCard={onMoveCard}
+                onHover={onHover}
+                onSelect={onSelect}
+              />
+            )}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function DeckBoardSection({
+  title,
+  boardView,
+  groups,
+  view,
+  readOnly,
+  previewCardId,
+  onSetQty,
+  onSetCommander,
+  onMoveCard,
+  onHover,
+  onSelect,
+}: {
+  title?: string;
+  boardView: BoardView;
+  groups: Array<readonly [string, DeckEntry[]]>;
+  view: ViewMode;
+  readOnly: boolean;
+  previewCardId: string | null;
+  onSetQty: (cardId: string, qty: number) => void;
+  onSetCommander: (cardId: string, isCommander: boolean) => void;
+  onMoveCard: (cardId: string, from: BoardView, to: BoardView) => void;
+  onHover: (p: { src?: string; x: number; y: number } | null) => void;
+  onSelect: (cardId: string) => void;
+}) {
+  const sectionCount = groups.reduce(
+    (n, [, entries]) => n + countEntries(entries),
+    0
+  );
+
+  return (
+    <section
+      className={
+        title && boardView !== "main"
+          ? "border-t border-border/80 pt-4"
+          : undefined
+      }
+    >
+      {title && (
+        <header
+          className={`mb-3 flex items-center gap-2 text-xs font-semibold text-text ${
+            view === "list" ? "px-4" : ""
+          }`}
+        >
+          <span>{title}</span>
+          <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-text-subtle">
+            {sectionCount}
+          </span>
+        </header>
+      )}
+      <div className="space-y-4">
+        {groups.map(([group, entries]) => (
+          <div key={`${boardView}-${group}`}>
+            <header
+              className={`mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase text-text-muted ${
+                view === "list" ? "px-4" : ""
+              }`}
+            >
+              <span>{group}</span>
+              <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-medium text-text-subtle">
+                {countEntries(entries)}
+              </span>
+            </header>
+            {view === "grid" ? (
+              <ul className="deck-card-grid grid grid-cols-[repeat(auto-fill,minmax(5.35rem,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(8.25rem,1fr))] sm:gap-3">
+                {entries.map((entry) => (
+                  <DeckTile
+                    key={entry.cardId}
+                    entry={entry}
+                    boardView={boardView}
+                    readOnly={readOnly}
+                    highlighted={previewCardId === entry.cardId}
+                    onSetQty={(quantity) => onSetQty(entry.cardId, quantity)}
+                    onSetCommander={(isCommander) =>
+                      onSetCommander(entry.cardId, isCommander)
+                    }
+                    onMove={(to) => onMoveCard(entry.cardId, boardView, to)}
+                    onHover={onHover}
+                    onSelect={() => onSelect(entry.cardId)}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <ul className="divide-y divide-border border-y border-border bg-white">
+                {entries.map((entry) => (
+                  <DeckRow
+                    key={entry.cardId}
+                    entry={entry}
+                    boardView={boardView}
+                    readOnly={readOnly}
+                    highlighted={previewCardId === entry.cardId}
+                    onSetQty={(quantity) => onSetQty(entry.cardId, quantity)}
+                    onSetCommander={(isCommander) =>
+                      onSetCommander(entry.cardId, isCommander)
+                    }
+                    onMove={(to) => onMoveCard(entry.cardId, boardView, to)}
+                    onHover={onHover}
+                    onSelect={() => onSelect(entry.cardId)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -383,41 +513,6 @@ function SortSelect({
         <option value="price">Price</option>
       </select>
     </label>
-  );
-}
-
-function BoardToggle({
-  boardView,
-  onChange,
-}: {
-  boardView: BoardView;
-  onChange: (view: BoardView) => void;
-}) {
-  return (
-    <div className="segmented-control flex items-center rounded-lg p-0.5 text-[11px] lg:p-1 lg:text-xs">
-      <button
-        onClick={() => onChange("main")}
-        aria-pressed={boardView === "main"}
-        className={`h-7 rounded-md px-2 transition lg:px-2.5 ${
-          boardView === "main"
-            ? "selected-segment font-medium text-text"
-            : "text-text-muted hover:text-text"
-        }`}
-      >
-        Main
-      </button>
-      <button
-        onClick={() => onChange("sideboard")}
-        aria-pressed={boardView === "sideboard"}
-        className={`h-7 rounded-md px-2 transition lg:px-2.5 ${
-          boardView === "sideboard"
-            ? "selected-segment font-medium text-text"
-            : "text-text-muted hover:text-text"
-        }`}
-      >
-        Sideboard
-      </button>
-    </div>
   );
 }
 
@@ -461,6 +556,7 @@ function ViewToggle({
 function DeckTile({
   entry,
   boardView,
+  readOnly,
   highlighted,
   onSetQty,
   onSetCommander,
@@ -470,19 +566,18 @@ function DeckTile({
 }: {
   entry: DeckEntry;
   boardView: BoardView;
+  readOnly: boolean;
   highlighted?: boolean;
   onSetQty: (q: number) => void;
   onSetCommander: (isCommander: boolean) => void;
-  onMove: () => void;
+  onMove: (to: BoardView) => void;
   onHover: (p: { src?: string; x: number; y: number } | null) => void;
   onSelect: () => void;
 }) {
-  const isSideboard = boardView === "sideboard";
-  const moveTitle = isSideboard ? "Move to main deck" : "Move to sideboard";
-  const moveLabel = `${moveTitle}: ${entry.name}`;
-  const trashTop = entry.isCommander && !isSideboard ? "top-9" : "top-1.5";
+  const isMain = boardView === "main";
+  const trashTop = entry.isCommander && isMain ? "top-9" : "top-1.5";
   const moveTop =
-    entry.isCommander && !isSideboard ? "top-[4.65rem]" : "top-9";
+    entry.isCommander && isMain ? "top-[4.65rem]" : "top-9";
 
   return (
     <li
@@ -526,92 +621,93 @@ function DeckTile({
           </div>
         )}
 
-        {entry.isCommander && !isSideboard && (
+        {entry.isCommander && isMain && (
           <div className="pointer-events-none absolute left-1.5 top-1.5 rounded-full bg-accent px-2 py-1 text-[10px] font-semibold uppercase text-white shadow">
             Commander
           </div>
         )}
 
-        {/* trash: remove all copies */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onSetQty(0);
-          }}
-          aria-label={`Remove all ${entry.name}`}
-          title="Remove all copies"
-          className={`absolute left-1.5 ${trashTop} hidden h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100`}
-        >
-          <TrashIcon />
-        </button>
-
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onMove();
-          }}
-          aria-label={moveLabel}
-          title={moveTitle}
-          className={`absolute left-1.5 ${moveTop} hidden h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-accent lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100`}
-        >
-          <MoveIcon direction={isSideboard ? "left" : "right"} />
-        </button>
+        {!readOnly && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onSetQty(0);
+            }}
+            aria-label={`Remove all ${entry.name}`}
+            title="Remove all copies"
+            className={`absolute left-1.5 ${trashTop} hidden h-7 w-7 items-center justify-center rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-[color:var(--danger)] lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100`}
+          >
+            <TrashIcon />
+          </button>
+        )}
 
         {/* quantity badge overlay */}
         <div className="pointer-events-none absolute right-1.5 top-1.5 flex h-7 min-w-7 items-center justify-center rounded-full bg-black/80 px-2 text-sm font-semibold text-white tabular-nums shadow">
           ×{entry.quantity}
         </div>
 
-        {/* +/− controls */}
-        <div
-          className={`absolute inset-x-1.5 bottom-1.5 hidden items-center gap-1 transition lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 ${
-            isSideboard ? "justify-center" : "justify-between"
-          }`}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onSetQty(entry.quantity - 1);
-            }}
-            className="deck-action-button"
-            aria-label={`Remove one ${entry.name}`}
-            title="Remove one"
+        {!readOnly && (
+          <div
+            className={`absolute inset-x-1.5 bottom-1.5 hidden items-center gap-1 transition lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 ${
+              isMain ? "justify-between" : "justify-center"
+            }`}
           >
-            −
-          </button>
-          {!isSideboard && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onSetCommander(!entry.isCommander);
+                onSetQty(entry.quantity - 1);
               }}
-              className={`deck-action-button ${
-                entry.isCommander ? "deck-action-button-active" : ""
-              }`}
-              aria-pressed={entry.isCommander}
-              aria-label={
-                entry.isCommander
-                  ? `Remove ${entry.name} as commander`
-                  : `Set ${entry.name} as commander`
-              }
-              title={entry.isCommander ? "Remove commander" : "Set commander"}
+              className="deck-action-button"
+              aria-label={`Remove one ${entry.name}`}
+              title="Remove one"
             >
-              <CommanderIcon />
+              −
             </button>
-          )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onSetQty(entry.quantity + 1);
-            }}
-            className="deck-action-button"
-            aria-label={`Add another ${entry.name}`}
-            title="Add one"
-          >
-            +
-          </button>
-        </div>
+            {isMain && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSetCommander(!entry.isCommander);
+                }}
+                className={`deck-action-button ${
+                  entry.isCommander ? "deck-action-button-active" : ""
+                }`}
+                aria-pressed={entry.isCommander}
+                aria-label={
+                  entry.isCommander
+                    ? `Remove ${entry.name} as commander`
+                    : `Set ${entry.name} as commander`
+                }
+                title={entry.isCommander ? "Remove commander" : "Set commander"}
+              >
+                <CommanderIcon />
+              </button>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetQty(entry.quantity + 1);
+              }}
+              className="deck-action-button"
+              aria-label={`Add another ${entry.name}`}
+              title="Add one"
+            >
+              +
+            </button>
+          </div>
+        )}
       </div>
+      {!readOnly && (
+        <MoveMenu
+          entryName={entry.name}
+          currentBoard={boardView}
+          onMove={onMove}
+          wrapperClassName={`absolute left-1.5 ${moveTop} z-20 hidden lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100`}
+          buttonClassName="h-7 w-7 rounded-full bg-white/95 text-text-muted shadow ring-1 ring-black/10 transition hover:bg-white hover:text-accent"
+          menuClassName="left-full top-0 ml-1"
+          direction={boardView === "main" ? "right" : "left"}
+        />
+      )}
       <div
         className="mt-1.5 truncate px-0.5 text-[11px] font-medium text-text-muted"
         title={entry.name}
@@ -625,6 +721,7 @@ function DeckTile({
 function DeckRow({
   entry,
   boardView,
+  readOnly,
   highlighted,
   onSetQty,
   onSetCommander,
@@ -634,15 +731,15 @@ function DeckRow({
 }: {
   entry: DeckEntry;
   boardView: BoardView;
+  readOnly: boolean;
   highlighted?: boolean;
   onSetQty: (q: number) => void;
   onSetCommander: (isCommander: boolean) => void;
-  onMove: () => void;
+  onMove: (to: BoardView) => void;
   onHover: (p: { src?: string; x: number; y: number } | null) => void;
   onSelect: () => void;
 }) {
-  const isSideboard = boardView === "sideboard";
-  const moveTitle = isSideboard ? "Move to main deck" : "Move to sideboard";
+  const isMain = boardView === "main";
 
   return (
     <li
@@ -676,7 +773,7 @@ function DeckRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <div className="truncate text-sm font-semibold">{entry.name}</div>
-          {entry.isCommander && !isSideboard && (
+          {entry.isCommander && isMain && (
             <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
               Commander
             </span>
@@ -692,6 +789,7 @@ function DeckRow({
       <div className="shrink-0 rounded-full bg-black/80 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
         ×{entry.quantity}
       </div>
+      {!readOnly && (
       <div className="hidden shrink-0 items-center gap-1 transition lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
         <button
           onClick={(e) => {
@@ -715,7 +813,7 @@ function DeckRow({
         >
           +
         </button>
-        {!isSideboard && (
+        {isMain && (
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -735,17 +833,15 @@ function DeckRow({
             <CommanderIcon />
           </button>
         )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onMove();
-          }}
-          className="deck-action-button"
-          aria-label={`${moveTitle}: ${entry.name}`}
-          title={moveTitle}
-        >
-          <MoveIcon direction={isSideboard ? "left" : "right"} />
-        </button>
+        <MoveMenu
+          entryName={entry.name}
+          currentBoard={boardView}
+          onMove={onMove}
+          wrapperClassName="relative"
+          buttonClassName="deck-action-button"
+          menuClassName="right-0 top-full mt-1"
+          direction={boardView === "main" ? "right" : "left"}
+        />
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -758,7 +854,78 @@ function DeckRow({
           <TrashIcon />
         </button>
       </div>
+      )}
     </li>
+  );
+}
+
+function MoveMenu({
+  entryName,
+  currentBoard,
+  onMove,
+  wrapperClassName,
+  buttonClassName,
+  menuClassName,
+  direction,
+}: {
+  entryName: string;
+  currentBoard: BoardView;
+  onMove: (to: BoardView) => void;
+  wrapperClassName: string;
+  buttonClassName: string;
+  menuClassName: string;
+  direction: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const targets = BOARD_VIEWS.filter((view) => view !== currentBoard);
+
+  return (
+    <div
+      className={wrapperClassName}
+      onClick={(event) => event.stopPropagation()}
+      onBlur={(event) => {
+        const nextFocus = event.relatedTarget;
+        if (
+          !(nextFocus instanceof Node) ||
+          !event.currentTarget.contains(nextFocus)
+        ) {
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`flex items-center justify-center ${buttonClassName}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Move ${entryName}`}
+        title="Move card"
+      >
+        <MoveIcon direction={direction} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={`absolute z-30 min-w-32 overflow-hidden rounded-lg border border-border bg-white py-1 text-xs text-text shadow-lg ${menuClassName}`}
+        >
+          {targets.map((target) => (
+            <button
+              key={target}
+              type="button"
+              role="menuitem"
+              className="block w-full px-3 py-1.5 text-left hover:bg-surface-subtle"
+              onClick={() => {
+                setOpen(false);
+                onMove(target);
+              }}
+            >
+              Move to {BOARD_LABELS[target]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -790,9 +957,9 @@ function PriceSummary({
         ? `${pricedCount}/${totalCount} cards priced — total excludes unpriced cards`
         : "Estimated total deck price (USD, Scryfall)";
   return (
-    <div className="group relative">
+    <div className="group relative flex items-center self-center">
       <span
-        className="cursor-default rounded-full border border-border bg-white/80 px-2.5 py-1 font-medium tabular-nums text-text shadow-sm"
+        className="inline-flex h-8 cursor-default items-center rounded-full border border-border bg-white/80 px-2.5 font-medium tabular-nums text-text shadow-sm"
         title={title}
       >
         {label}
@@ -874,7 +1041,7 @@ function ManaCurve({ curve }: { curve: number[] }) {
   const max = Math.max(1, ...curve);
   return (
     <div
-      className="flex items-end gap-0.5 rounded-full border border-border bg-white/78 px-2 py-1 shadow-sm"
+      className="flex w-32 items-end justify-center gap-0.5 rounded-full border border-border bg-white/78 px-2 py-1 shadow-sm"
       title="Mana curve (non-lands)"
     >
       {curve.map((n, i) => (

@@ -28,10 +28,15 @@ type Props = {
   previewCardId?: string | null;
   semanticRules: boolean;
   onSemanticRulesChange: (enabled: boolean) => void;
+  canUseSemanticSearch: boolean;
   offlineActive?: boolean;
   offlineReady?: boolean;
   similaritySeeds: ScryfallCard[];
   onRemoveSimilaritySeed: (oracleId: string) => void;
+  tourSearchName?: string;
+  tourSearchKey?: number;
+  tourSelectFirstResultKey?: number;
+  onTourSelectResult?: (card: ScryfallCard) => void;
 };
 
 const COLORS: { sym: string; name: string }[] = [
@@ -48,6 +53,7 @@ const HYBRID_RESULT_LIMIT = 32;
 const HYBRID_POST_FILTER_FETCH_LIMIT = 256;
 const MAX_EXACT_VECTOR_CANDIDATE_IDS = 1024;
 export const MAX_SIMILARITY_SEEDS = 8;
+const EMPTY_RESULTS: ScryfallCard[] = [];
 
 function dedupeCards(cards: ScryfallCard[]): ScryfallCard[] {
   const byIdentity = new Map<string, ScryfallCard>();
@@ -76,10 +82,15 @@ export function SearchPanel({
   previewCardId = null,
   semanticRules,
   onSemanticRulesChange,
+  canUseSemanticSearch,
   offlineActive = false,
   offlineReady = false,
   similaritySeeds,
   onRemoveSimilaritySeed,
+  tourSearchName,
+  tourSearchKey = 0,
+  tourSelectFirstResultKey = 0,
+  onTourSelectResult,
 }: Props) {
   const [filters, setFilters] = useState<AdvancedFilters>({
     sort: "name",
@@ -92,20 +103,61 @@ export function SearchPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hybridCards = useAction(api.cardEmbeddings.hybridCards);
-  const seedOracleIds = similaritySeeds
+  const semanticEnabled = semanticRules && canUseSemanticSearch;
+  const visibleSimilaritySeeds = canUseSemanticSearch ? similaritySeeds : [];
+  const seedOracleIds = visibleSimilaritySeeds
     .map(oracleIdForCard)
     .filter((oracleId): oracleId is string => oracleId !== undefined);
   const seedKey = seedOracleIds.join("|");
-  const searchRequest = buildSearchRequest(filters, semanticRules, seedOracleIds);
-  const queryPreview = searchRequest.query;
+  const searchRequest = buildSearchRequest(
+    filters,
+    semanticEnabled,
+    seedOracleIds
+  );
   const hasCurrentResults = resultsKey === searchRequest.key;
   const visibleResults =
-    searchRequest.ready && hasCurrentResults ? results : [];
+    searchRequest.ready && hasCurrentResults ? results : EMPTY_RESULTS;
   const visibleTotal = hasCurrentResults ? total : null;
 
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<number | null>(null);
   const runRef = useRef(0);
+  const lastTourSearchKeyRef = useRef(0);
+  const lastTourSelectKeyRef = useRef(0);
+
+  useEffect(() => {
+    if (!tourSearchName || tourSearchKey === lastTourSearchKeyRef.current) {
+      return;
+    }
+
+    lastTourSearchKeyRef.current = tourSearchKey;
+    onSemanticRulesChange(false);
+    setFilters({
+      sort: "name",
+      colorMode: "identity",
+      name: tourSearchName,
+    });
+    setFiltersExpanded(true);
+  }, [onSemanticRulesChange, tourSearchKey, tourSearchName]);
+
+  useEffect(() => {
+    if (
+      tourSelectFirstResultKey === 0 ||
+      tourSelectFirstResultKey === lastTourSelectKeyRef.current ||
+      loading ||
+      visibleResults.length === 0
+    ) {
+      return;
+    }
+
+    lastTourSelectKeyRef.current = tourSelectFirstResultKey;
+    onTourSelectResult?.(visibleResults[0]);
+  }, [
+    loading,
+    onTourSelectResult,
+    tourSelectFirstResultKey,
+    visibleResults,
+  ]);
 
   useEffect(() => {
     const {
@@ -116,7 +168,11 @@ export function SearchPanel({
       vectorQuery,
       seedOracleIds,
       ready,
-    } = buildSearchRequest(filters, semanticRules, seedKey ? seedKey.split("|") : []);
+    } = buildSearchRequest(
+      filters,
+      semanticEnabled,
+      seedKey ? seedKey.split("|") : []
+    );
     const runId = runRef.current + 1;
     runRef.current = runId;
 
@@ -180,7 +236,7 @@ export function SearchPanel({
         if (mode === "hybrid") {
           const constraintFilters = buildVectorConstraintFilters(
             filters,
-            semanticRules
+            semanticEnabled
           );
           let candidateOracleIds: string[] | undefined;
           let postFilterOracleIds: Set<string> | undefined;
@@ -268,7 +324,14 @@ export function SearchPanel({
       abortRef.current = null;
       runRef.current += 1;
     };
-  }, [filters, semanticRules, seedKey, hybridCards, offlineActive, offlineReady]);
+  }, [
+    filters,
+    semanticEnabled,
+    seedKey,
+    hybridCards,
+    offlineActive,
+    offlineReady,
+  ]);
 
   function update<K extends keyof AdvancedFilters>(
     key: K,
@@ -301,7 +364,7 @@ export function SearchPanel({
     setFiltersExpanded(false);
   }
 
-  const activeFilterCount = countActiveFilters(filters, semanticRules);
+  const activeFilterCount = countActiveFilters(filters, semanticEnabled);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -345,6 +408,7 @@ export function SearchPanel({
             <Field label="Name">
               <input
                 type="text"
+                data-tour="tour-search-name"
                 value={filters.name ?? ""}
                 onChange={(e) => update("name", e.target.value)}
                 className="input"
@@ -362,6 +426,7 @@ export function SearchPanel({
             <Field label="Name">
               <input
                 type="text"
+                data-tour="tour-search-name"
                 value={filters.name ?? ""}
                 onChange={(e) => update("name", e.target.value)}
                 className="input"
@@ -370,11 +435,21 @@ export function SearchPanel({
             <Field
               label="Rules text"
               labelAccessory={
-                <label className="flex items-center gap-1 text-[10px] font-medium text-text-muted">
+                <label
+                  data-tour="tour-search-semantic"
+                  className="flex items-center gap-1 text-[10px] font-medium text-text-muted"
+                >
                   <input
                     type="checkbox"
-                    checked={semanticRules}
+                    checked={semanticEnabled}
                     disabled={offlineActive}
+                    title={
+                      canUseSemanticSearch
+                        ? "Semantic search"
+                        : offlineActive
+                          ? "Semantic search is unavailable while offline"
+                          : "Log in or create a free account to use semantic search"
+                    }
                     onChange={(e) => onSemanticRulesChange(e.target.checked)}
                     className="h-3 w-3 accent-accent"
                   />
@@ -387,7 +462,7 @@ export function SearchPanel({
                 value={filters.oracle ?? ""}
                 onChange={(e) => update("oracle", e.target.value)}
                 placeholder={
-                  semanticRules
+                  semanticEnabled
                     ? "cheap protection, sacrifice payoff"
                     : "draw, flying, sacrifice"
                 }
@@ -598,15 +673,10 @@ export function SearchPanel({
               </select>
             </Field>
 
-            <div className="flex items-center justify-between min-[480px]:col-span-2 xl:col-span-4">
-              <code className="min-w-0 truncate rounded-lg border border-border bg-white/70 px-2 py-1 font-mono text-[11px] text-text-muted shadow-sm">
-                {queryPreview || "(empty query)"}
-              </code>
-            </div>
-            {similaritySeeds.length > 0 && (
+            {visibleSimilaritySeeds.length > 0 && (
               <div className="min-[480px]:col-span-2 xl:col-span-4">
                 <SimilaritySeedPreview
-                  seeds={similaritySeeds}
+                  seeds={visibleSimilaritySeeds}
                   onRemove={onRemoveSimilaritySeed}
                 />
               </div>
@@ -654,6 +724,7 @@ export function SearchPanel({
               <li
                 key={oracleIdForCard(card) ?? card.id}
                 aria-current={isPreviewed ? "true" : undefined}
+                data-tour={index === 0 ? "tour-search-result" : undefined}
                 className={`mobile-search-result animate-row group relative grid cursor-pointer grid-cols-[56px_minmax(0,1fr)_2.75rem] items-center gap-2 px-3 py-2.5 transition sm:grid-cols-[72px_minmax(12rem,18rem)_minmax(4rem,auto)_2rem] sm:gap-3 sm:px-4 sm:py-3 xl:grid-cols-[72px_minmax(13rem,18rem)_minmax(0,1fr)_minmax(5rem,auto)_2rem] ${
                   isPreviewed
                     ? "bg-[image:var(--rainbow-soft)] ring-2 ring-inset ring-accent/60"

@@ -4,7 +4,6 @@ export type MobileWorkspacePane = "search" | "deck";
 
 type MobileWorkspaceTabsProps = {
   active: MobileWorkspacePane;
-  deckCount: number;
   onChange: (pane: MobileWorkspacePane) => void;
   placement?: "fixed" | "panel" | "menu";
   className?: string;
@@ -12,7 +11,6 @@ type MobileWorkspaceTabsProps = {
 
 export function MobileWorkspaceTabs({
   active,
-  deckCount,
   onChange,
   placement = "fixed",
   className,
@@ -45,7 +43,6 @@ export function MobileWorkspaceTabs({
           pane="deck"
           active={active}
           label="Deck"
-          badge={deckCount > 0 ? String(deckCount) : undefined}
           onChange={onChange}
         />
       </div>
@@ -57,13 +54,11 @@ function WorkspaceTab({
   pane,
   active,
   label,
-  badge,
   onChange,
 }: {
   pane: MobileWorkspacePane;
   active: MobileWorkspacePane;
   label: string;
-  badge?: string;
   onChange: (pane: MobileWorkspacePane) => void;
 }) {
   const selected = active === pane;
@@ -80,17 +75,6 @@ function WorkspaceTab({
     >
       {pane === "search" ? <SearchIcon /> : <DeckIcon />}
       <span>{label}</span>
-      {badge ? (
-        <span
-          className={`min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-center text-[11px] font-bold tabular-nums leading-none ${
-            selected
-              ? "bg-accent text-white"
-              : "bg-surface-subtle text-text-muted"
-          }`}
-        >
-          {badge}
-        </span>
-      ) : null}
     </button>
   );
 }

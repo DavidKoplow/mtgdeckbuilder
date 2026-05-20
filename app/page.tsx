@@ -1,771 +1,326 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import Link from "next/link";
-import { useDecks } from "./lib/decks";
-import {
-  MAX_SIMILARITY_SEEDS,
-  SearchPanel,
-} from "./components/SearchPanel";
-import { DeckPanel } from "./components/DeckPanel";
-import { DeckSelector } from "./components/DeckSelector";
-import { CardHover } from "./components/CardHover";
-import { CardDetail } from "./components/CardDetail";
-import { ExportButton } from "./components/ExportButton";
-import { ImportButton } from "./components/ImportButton";
-import { AuthButton } from "./components/AuthButton";
+import { useQuery } from "convex/react";
+import { api } from "../convex/_generated/api";
 import { AppIcon } from "./components/AppIcon";
-import { SettingsButton } from "./components/SettingsButton";
-import { MobileAppHeader } from "./components/layout/MobileAppHeader";
-import {
-  MobileWorkspaceTabs,
-  type MobileWorkspacePane,
-} from "./components/layout/MobileWorkspaceTabs";
-import { ResponsivePane } from "./components/layout/ResponsivePane";
-import { useFinePointer } from "./hooks/useMediaQuery";
-import type { ScryfallCard } from "./lib/types";
-import { oracleIdForCard } from "./lib/cardIdentity";
-import { getCardById } from "./lib/scryfall";
-import { getOfflineCardById, resolveLinesOffline, useOfflineMode } from "./lib/offline";
+import { AuthButton } from "./components/AuthButton";
+import type {
+  DeckColorBreakdown,
+  PublicDeckSummary,
+} from "./lib/types";
 
-type HoverState = {
-  src?: string;
-  backSrc?: string;
-  x: number;
-  y: number;
-};
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
-export default function Home() {
-  const offline = useOfflineMode();
-  const decks = useDecks({
-    offlineEnabled: offline.settings.enabled,
-    offlineActive: offline.offlineActive,
-    online: offline.online,
-    onOfflineSyncingChange: offline.setSyncing,
-    onPendingDeckChangesChange: offline.refreshPendingDeckChanges,
-  });
-  const [hover, setHover] = useState<HoverState | null>(null);
-  const [selected, setSelected] = useState<ScryfallCard | null>(null);
-  const [semanticRules, setSemanticRules] = useState(false);
-  const [similaritySeeds, setSimilaritySeeds] = useState<ScryfallCard[]>([]);
-  const [selectorOpen, setSelectorOpen] = useState(false);
-  const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
-  const [mobilePane, setMobilePane] = useState<MobileWorkspacePane>("search");
-  const finePointer = useFinePointer();
-  const [leftPct, setLeftPct] = useState(50);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef(false);
-
-  useEffect(() => {
-    function endDrag() {
-      if (!draggingRef.current) return;
-      draggingRef.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-    function onMove(e: MouseEvent) {
-      if (!draggingRef.current) return;
-      // If the mouse button was released outside the window, mouseup never
-      // fired — detect that here so drags can't silently persist and hijack
-      // subsequent motion (e.g. typing in the search input).
-      if (e.buttons === 0) {
-        endDrag();
-        return;
-      }
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const pct = ((e.clientX - rect.left) / rect.width) * 100;
-      setLeftPct(Math.max(20, Math.min(80, pct)));
-    }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", endDrag);
-    window.addEventListener("blur", endDrag);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", endDrag);
-      window.removeEventListener("blur", endDrag);
-    };
-  }, [leftPct]);
-
-  function startResize() {
-    draggingRef.current = true;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }
-
-  const handleDeckCardClick = useCallback(async (cardId: string) => {
-    try {
-      const card = offline.offlineActive
-        ? await getOfflineCardById(cardId)
-        : await getCardById(cardId);
-      if (card) {
-        setSelected(card);
-      }
-    } catch {
-      // ignore — deck tile remains clickable but we silently fail the fetch
-    }
-  }, [offline.offlineActive]);
-
-  const activeIdForCardData = decks.activeId;
-  const refreshCardDataFn = decks.refreshCardData;
-  const handleRefreshCardData = useCallback(() => {
-    if (!activeIdForCardData) return;
-    refreshCardDataFn(activeIdForCardData);
-  }, [activeIdForCardData, refreshCardDataFn]);
-
-  const handleToggleSimilaritySeed = useCallback((card: ScryfallCard) => {
-    const oracleId = oracleIdForCard(card);
-    if (!oracleId) return;
-
-    setSimilaritySeeds((seeds) => {
-      if (seeds.some((seed) => oracleIdForCard(seed) === oracleId)) {
-        return seeds.filter((seed) => oracleIdForCard(seed) !== oracleId);
-      }
-      if (seeds.length >= MAX_SIMILARITY_SEEDS) return seeds;
-      return [...seeds, card];
-    });
-  }, []);
-
-  const handleRemoveSimilaritySeed = useCallback((oracleId: string) => {
-    setSimilaritySeeds((seeds) =>
-      seeds.filter((seed) => oracleIdForCard(seed) !== oracleId)
-    );
-  }, []);
-
-  const { undo, redo, canUndo, canRedo } = decks;
-  const closeMobileHeader = useCallback(() => {
-    setMobileHeaderOpen(false);
-  }, []);
-
-  const openDeckSelector = useCallback(() => {
-    setSelectorOpen(true);
-    closeMobileHeader();
-  }, [closeMobileHeader]);
-
-  const toggleMobileHeader = useCallback(() => {
-    setMobileHeaderOpen((open) => !open);
-  }, []);
-
-  const handleUndo = useCallback(() => {
-    if (canUndo) undo();
-  }, [canUndo, undo]);
-  const handleRedo = useCallback(() => {
-    if (canRedo) redo();
-  }, [canRedo, redo]);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      // Don't hijack editing inside text inputs that handle their own undo
-      const t = e.target as HTMLElement | null;
-      const tag = t?.tagName;
-      const editable =
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        (t && (t as HTMLElement).isContentEditable);
-      if (editable) return;
-      if (e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) handleRedo();
-        else handleUndo();
-      } else if (e.key.toLowerCase() === "y" && !e.shiftKey) {
-        e.preventDefault();
-        handleRedo();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [handleUndo, handleRedo]);
-
-  const active = decks.activeDeck;
-  const handlePreviewDeckQuantityChange = useCallback(
-    (card: ScryfallCard, quantity: number) => {
-      if (!active) return;
-      const safeQuantity = Math.max(0, Math.min(255, Math.floor(quantity)));
-      const current = active.entries.find((entry) => entry.cardId === card.id);
-
-      if (current) {
-        decks.setQuantity(active.id, card.id, safeQuantity);
-        return;
-      }
-
-      if (safeQuantity > 0) {
-        decks.addCard(active.id, card, safeQuantity);
-      }
-    },
-    [active, decks]
+export default function PublicDecksPage() {
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
+  const trimmedSearch = deferredSearch.trim();
+  const searchArgs = useMemo(
+    () => ({
+      query: trimmedSearch,
+      limit: 36,
+    }),
+    [trimmedSearch]
   );
-
-  const handleCommanderChange = useCallback(
-    (card: ScryfallCard, isCommander: boolean) => {
-      if (!active) return;
-      decks.setCommander(active.id, isCommander ? card.id : null);
-    },
-    [active, decks]
-  );
-
-  if (!decks.hydrated) {
-    return (
-      <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-8 text-sm text-text-subtle">
-        <div className="empty-pill flex items-center gap-3 rounded-full px-4 py-2">
-          <span className="accent-dot h-2.5 w-2.5 animate-pulse rounded-full" />
-          Loading deck workspace
-        </div>
-      </div>
-    );
-  }
-
-  if (!decks.isAuthenticated) {
-    return (
-      <div className="app-shell-bg flex min-h-0 flex-1 items-center justify-center p-6">
-        <div className="workspace-panel rainbow-edge animate-panel flex w-full max-w-md flex-col items-center gap-5 overflow-hidden rounded-lg px-8 py-10 text-center">
-          <AppIcon size={56} className="shadow-sm" />
-          <div>
-            <h1 className="text-2xl font-semibold text-text">
-              magicaldeckgatherer
-            </h1>
-            <p className="mt-2 text-sm leading-6 text-text-muted">
-              A focused Magic deck workspace with saved decks, card search, and
-              playtesting.
-            </p>
-          </div>
-          <AuthButton />
-        </div>
-      </div>
-    );
-  }
-
-  const activeCardCount =
-    active?.entries.reduce((n, entry) => n + entry.quantity, 0) ?? 0;
-  const activeSideboardCount =
-    active?.sideboard.reduce((n, entry) => n + entry.quantity, 0) ?? 0;
-  const selectedOracleId = selected ? oracleIdForCard(selected) : undefined;
-  const selectedIsSimilaritySeed =
-    selectedOracleId !== undefined &&
-    similaritySeeds.some((seed) => oracleIdForCard(seed) === selectedOracleId);
-  const similaritySeedDisabled =
-    selected !== null &&
-    !selectedIsSimilaritySeed &&
-    similaritySeeds.length >= MAX_SIMILARITY_SEEDS;
-  const selectedDeckEntry = selected
-    ? active?.entries.find((entry) => entry.cardId === selected.id)
-    : undefined;
-  const selectedDeckQuantity = selectedDeckEntry?.quantity ?? 0;
-  const selectedIsCommander = selectedDeckEntry?.isCommander === true;
+  const recentArgs = useMemo(() => ({ limit: 12 }), []);
+  const results = useQuery(api.decks.searchPublicDecks, searchArgs);
+  const recent = useQuery(api.decks.listRecentPublicDecks, recentArgs);
+  const showingSearch = trimmedSearch.length > 0;
+  const mainDecks = results ?? [];
 
   return (
     <div className="app-shell-bg flex min-h-0 flex-1 flex-col overflow-hidden">
-      <header
-        className="app-header shrink-0 px-3 py-2 sm:px-4 sm:py-3 lg:max-h-none lg:overflow-visible lg:py-3"
-      >
-        <div className="flex w-full min-w-0 flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <MobileAppHeader
-            menuOpen={mobileHeaderOpen}
-            onToggleMenu={toggleMobileHeader}
-            onOpenDeckSelector={openDeckSelector}
-            centerContent={
-              <div className="mobile-workspace-menu-tabs lg:hidden">
-                <MobileWorkspaceTabs
-                  active={mobilePane}
-                  deckCount={activeCardCount}
-                  onChange={setMobilePane}
-                  placement="menu"
-                  className="flex justify-center"
-                />
+      <header className="app-header shrink-0 px-3 py-2 sm:px-4 sm:py-3">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <Link href="/" className="header-brand-button shrink-0">
+            <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm ring-1 ring-border/70">
+              <AppIcon size={26} />
+            </span>
+            <div className="hidden leading-tight sm:block">
+              <div className="text-sm font-semibold tracking-normal text-text">
+                magicaldeckgatherer
               </div>
-            }
-            menuContent={
-              <div className="mobile-header-deck-summary flex min-w-0 flex-col gap-2">
-                {active ? (
-                  <div className="mobile-menu-deck-row flex min-w-0 items-center gap-2">
-                    <DeckNameEditor
-                      key={active.id}
-                      name={active.name}
-                      onRename={(n) => decks.renameDeck(active.id, n)}
-                    />
-                    <ClearDeckButton
-                      disabled={
-                        active.entries.length === 0 &&
-                        active.sideboard.length === 0
-                      }
-                      onClear={() => decks.clearDeck(active.id)}
-                    />
-                  </div>
-                ) : (
-                  <span className="text-sm text-text-subtle">No active deck</span>
-                )}
-              </div>
-            }
-            actions={
-              <>
-                {active && (
-                  <div className="mobile-menu-action-cell">
-                    <ImportButton
-                      onImport={(entries, sideboard, mode) =>
-                        decks.importEntries(active.id, entries, sideboard, mode)
-                      }
-                      onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
-                      resolveLines={
-                        offline.offlineActive ? resolveLinesOffline : undefined
-                      }
-                    />
-                  </div>
-                )}
-                {active && (
-                  <div className="mobile-menu-action-cell">
-                    <ExportButton
-                      deck={active}
-                      disabled={
-                        active.entries.length === 0 &&
-                        active.sideboard.length === 0
-                      }
-                    />
-                  </div>
-                )}
-                {active && active.entries.length > 0 && (
-                  <Link
-                    href={`/play/?deck=${encodeURIComponent(active.id)}`}
-                    className="mobile-menu-action-full control-primary"
-                    title="Playtest this deck"
-                  >
-                    Playtest
-                  </Link>
-                )}
-                <div className="mobile-menu-action-cell">
-                  <SettingsButton offline={offline} />
-                </div>
-                <div className="mobile-menu-action-cell">
-                  <AuthButton />
-                </div>
-              </>
-            }
-          />
-
-          <div className="hidden w-full min-w-0 flex-col gap-2 lg:flex xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-center">
-              <button
-                onClick={openDeckSelector}
-                className="header-brand-button shrink-0"
-                aria-label="Open deck list"
-                title="Your decks"
-              >
-                <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm ring-1 ring-border/70">
-                  <AppIcon size={26} />
-                </span>
-                <div className="leading-tight">
-                  <div className="text-sm font-semibold tracking-normal text-text">
-                    magicaldeckgatherer
-                  </div>
-                  <div className="text-[11px] font-medium text-text-subtle">
-                    MTG deck workspace
-                  </div>
-                </div>
-              </button>
-
-              <div className="hidden h-8 w-px bg-border md:block" />
-
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                {active ? (
-                  <>
-                    <DeckNameEditor
-                      key={active.id}
-                      name={active.name}
-                      onRename={(n) => decks.renameDeck(active.id, n)}
-                    />
-                    <span className="header-meta-pill">
-                      <span className="tabular-nums">{activeCardCount}</span>
-                      <span>cards</span>
-                    </span>
-                    <span className="header-meta-pill">
-                      <span className="tabular-nums">{activeSideboardCount}</span>
-                      <span>sideboard</span>
-                    </span>
-                    <ClearDeckButton
-                      disabled={
-                        active.entries.length === 0 &&
-                        active.sideboard.length === 0
-                      }
-                      onClear={() => decks.clearDeck(active.id)}
-                    />
-                  </>
-                ) : (
-                  <span className="ml-1 text-sm text-text-subtle">
-                    No active deck
-                  </span>
-                )}
+              <div className="text-[11px] font-medium text-text-subtle">
+                Public decks
               </div>
             </div>
-
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 md:justify-end">
-              {active && (
-                <ImportButton
-                  onImport={(entries, sideboard, mode) =>
-                    decks.importEntries(active.id, entries, sideboard, mode)
-                  }
-                  onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
-                  resolveLines={
-                    offline.offlineActive ? resolveLinesOffline : undefined
-                  }
-                />
-              )}
-              {active && (
-                <ExportButton
-                  deck={active}
-                  disabled={
-                    active.entries.length === 0 &&
-                    active.sideboard.length === 0
-                  }
-                />
-              )}
-              {active && active.entries.length > 0 && (
-                <Link
-                  href={`/play/?deck=${encodeURIComponent(active.id)}`}
-                  className="control-primary"
-                  title="Playtest this deck"
-                >
-                  Playtest
-                </Link>
-              )}
-              {active && (
-                <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
-              )}
-              <SettingsButton offline={offline} />
-              <AuthButton />
-            </div>
+          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link href="/builder" className="control px-3 py-2 text-xs">
+              Builder
+            </Link>
+            <AuthButton />
           </div>
         </div>
       </header>
 
-      {decks.notice && (
-        <div
-          role="status"
-          className="flex items-center justify-between border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-xs text-amber-900 shadow-sm"
-        >
-          <span>{decks.notice}</span>
-          <button
-            onClick={decks.clearNotice}
-            className="rounded px-1.5 py-0.5 text-amber-800 hover:bg-amber-100"
-            aria-label="Dismiss notice"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      <DeckSelector
-        open={selectorOpen}
-        onClose={() => setSelectorOpen(false)}
-        decks={decks.decks}
-        activeId={decks.activeId}
-        onSelect={decks.setActive}
-        onCreate={decks.createDeck}
-        onDelete={decks.deleteDeck}
-      />
-
-      <main
-        ref={containerRef}
-        className="mobile-workspace-main flex min-h-0 flex-1 flex-col gap-2 px-2 py-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:gap-2 sm:px-3 sm:py-3 lg:flex-row lg:gap-4 lg:p-4 lg:pb-4"
-      >
-        <section
-          className="mobile-landscape-preview-pane workspace-panel rainbow-edge animate-panel min-h-0 min-w-0 flex-col overflow-hidden rounded-xl lg:hidden"
-        >
-          {selected ? (
-            <CardDetail
-              card={selected}
-              onBack={() => setSelected(null)}
-              deckQuantity={selectedDeckQuantity}
-              onDeckQuantityChange={handlePreviewDeckQuantityChange}
-              isCommander={selectedIsCommander}
-              onCommanderChange={handleCommanderChange}
-              onToggleSimilaritySeed={handleToggleSimilaritySeed}
-              isSimilaritySeed={selectedIsSimilaritySeed}
-              similaritySeedDisabled={similaritySeedDisabled}
-              offlineActive={offline.offlineActive}
-            />
-          ) : (
-            <PreviewPlaceholder />
-          )}
-        </section>
-        <section
-          className="mobile-landscape-right-pane flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl lg:hidden"
-        >
-          <ResponsivePane
-            mobileActive={mobilePane === "search"}
-            className="mobile-landscape-pane-content workspace-panel rainbow-edge animate-panel min-h-0 flex-1 flex-col overflow-hidden rounded-xl"
-          >
-            <div className="min-h-0 flex-1">
-              <SearchPanel
-                previewCardId={selected?.id ?? null}
-                semanticRules={semanticRules}
-                onSemanticRulesChange={setSemanticRules}
-                offlineActive={offline.offlineActive}
-                offlineReady={offline.cacheReady}
-                similaritySeeds={similaritySeeds}
-                onRemoveSimilaritySeed={handleRemoveSimilaritySeed}
-                onSelect={(card) => {
-                  setSelected(card);
-                }}
-                onAdd={(card) => active && decks.addCard(active.id, card)}
-                onHover={(h) => setHover(h)}
-              />
+      <main className="thin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 lg:px-6">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
+          <section className="workspace-panel rainbow-edge rounded-lg p-3 sm:p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <label className="min-w-0 flex-1">
+                <span className="sr-only">Search public decks</span>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search public decks"
+                  className="input min-h-11 text-sm"
+                />
+              </label>
             </div>
-          </ResponsivePane>
+          </section>
 
-          <ResponsivePane
-            mobileActive={mobilePane === "deck"}
-            className="mobile-landscape-pane-content workspace-panel rainbow-edge animate-panel min-h-0 flex-1 flex-col overflow-hidden rounded-xl"
-          >
-            {active ? (
-              <DeckPanel
-                deck={active}
-                previewCardId={selected?.id ?? null}
-                onSetQty={(cardId, qty) =>
-                  decks.setQuantity(active.id, cardId, qty)
-                }
-                onSetSideboardQty={(cardId, qty) =>
-                  decks.setQuantity(active.id, cardId, qty, "sideboard")
-                }
-                onMoveCard={(cardId, to) =>
-                  decks.moveCard(active.id, cardId, to)
-                }
-                onSetCommander={(cardId, isCommander) =>
-                  decks.setCommander(active.id, isCommander ? cardId : null)
-                }
-                onHover={(h) => setHover(h)}
-                onSelect={handleDeckCardClick}
-                onRefreshCardData={handleRefreshCardData}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center bg-surface p-8 text-sm text-text-subtle">
-                <div className="empty-pill rounded-full px-4 py-2">No active deck</div>
-              </div>
-            )}
-          </ResponsivePane>
-        </section>
-        <section
-          className="hidden workspace-panel rainbow-edge animate-panel min-h-0 flex-1 flex-col overflow-hidden rounded-lg lg:flex lg:flex-none"
-          style={{ flexBasis: `${leftPct}%` }}
-        >
-          <SearchPanel
-            previewCardId={selected?.id ?? null}
-            semanticRules={semanticRules}
-            onSemanticRulesChange={setSemanticRules}
-            offlineActive={offline.offlineActive}
-            offlineReady={offline.cacheReady}
-            similaritySeeds={similaritySeeds}
-            onRemoveSimilaritySeed={handleRemoveSimilaritySeed}
-            onSelect={(card) => {
-              setSelected(card);
-            }}
-            onAdd={(card) => active && decks.addCard(active.id, card)}
-            onHover={(h) => setHover(h)}
-          />
-        </section>
-        <div
-          onMouseDown={(e) => {
-            e.preventDefault();
-            startResize();
-          }}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize search and deck panels"
-          className="group -mx-2 hidden shrink-0 cursor-col-resize items-stretch rounded-full transition hover:bg-white/60 lg:flex"
-          style={{ width: 10 }}
-        >
-          <div className="m-auto h-14 w-[3px] rounded-full bg-border-strong transition-colors group-hover:bg-[image:var(--rainbow)]" />
-        </div>
-        <section
-          className="hidden workspace-panel rainbow-edge animate-panel min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg lg:flex"
-        >
           <div
-            className="flex shrink-0 flex-col overflow-hidden border-b border-border"
-            style={selected ? undefined : { height: "var(--workspace-top-height)" }}
+            className={`grid min-w-0 gap-4 ${
+              showingSearch ? "lg:grid-cols-[minmax(0,1fr)_22rem]" : ""
+            }`}
           >
-            {selected ? (
-              <CardDetail
-                card={selected}
-                onBack={() => setSelected(null)}
-                deckQuantity={selectedDeckQuantity}
-                onDeckQuantityChange={handlePreviewDeckQuantityChange}
-                isCommander={selectedIsCommander}
-                onCommanderChange={handleCommanderChange}
-                onToggleSimilaritySeed={handleToggleSimilaritySeed}
-                isSimilaritySeed={selectedIsSimilaritySeed}
-                similaritySeedDisabled={similaritySeedDisabled}
-                offlineActive={offline.offlineActive}
-              />
-            ) : (
-              <PreviewPlaceholder />
-            )}
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {active ? (
-              <DeckPanel
-                deck={active}
-                previewCardId={selected?.id ?? null}
-                onSetQty={(cardId, qty) =>
-                  decks.setQuantity(active.id, cardId, qty)
-                }
-                onSetSideboardQty={(cardId, qty) =>
-                  decks.setQuantity(active.id, cardId, qty, "sideboard")
-                }
-                onMoveCard={(cardId, to) =>
-                  decks.moveCard(active.id, cardId, to)
-                }
-                onSetCommander={(cardId, isCommander) =>
-                  decks.setCommander(active.id, isCommander ? cardId : null)
-                }
-                onHover={(h) => setHover(h)}
-                onSelect={handleDeckCardClick}
-                onRefreshCardData={handleRefreshCardData}
-              />
-            ) : (
-              <div className="flex h-full items-center justify-center bg-surface p-8 text-sm text-text-subtle">
-                <div className="empty-pill rounded-full px-4 py-2">No active deck</div>
+            <section className="min-w-0">
+              <div className="mb-2 flex items-end justify-between gap-3">
+                <div>
+                  <h1 className="text-lg font-semibold text-text">
+                    {showingSearch ? "Search results" : "Recently updated"}
+                  </h1>
+                  <div className="text-xs text-text-subtle">
+                    {results === undefined
+                      ? "Loading"
+                      : `${mainDecks.length} deck${mainDecks.length === 1 ? "" : "s"}`}
+                  </div>
+                </div>
               </div>
+              <DeckList decks={mainDecks} loading={results === undefined} />
+            </section>
+
+            {showingSearch && (
+              <aside className="min-w-0">
+                <div className="mb-2">
+                  <h2 className="text-sm font-semibold text-text">
+                    Recently updated
+                  </h2>
+                </div>
+                <DeckList compact decks={recent ?? []} loading={recent === undefined} />
+              </aside>
             )}
           </div>
-        </section>
+        </div>
       </main>
-
-      <CardHover
-        src={hover?.src}
-        backSrc={hover?.backSrc}
-        x={hover?.x ?? 0}
-        y={hover?.y ?? 0}
-        visible={finePointer && !!hover?.src}
-      />
     </div>
   );
 }
 
-function DeckNameEditor({
-  name,
-  onRename,
+function DeckList({
+  decks,
+  loading,
+  compact = false,
 }: {
-  name: string;
-  onRename: (name: string) => void;
+  decks: PublicDeckSummary[];
+  loading: boolean;
+  compact?: boolean;
 }) {
-  const [draft, setDraft] = useState({ source: name, value: name });
-  const value = draft.source === name ? draft.value : name;
-  function setValue(nextValue: string) {
-    setDraft({ source: name, value: nextValue });
-  }
-  function commit() {
-    const trimmed = value.trim();
-    if (trimmed && trimmed !== name) onRename(trimmed);
-    else setValue(name);
-  }
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        else if (e.key === "Escape") {
-          setValue(name);
-          (e.target as HTMLInputElement).blur();
-        }
-      }}
-      aria-label="Deck name"
-      className="min-w-48 flex-1 rounded-md border border-transparent bg-transparent px-2 text-sm font-semibold outline-none transition hover:border-border hover:bg-white focus:border-accent focus:bg-white focus:ring-2 focus:ring-accent/15"
-    />
-  );
-}
-
-function ClearDeckButton({
-  disabled,
-  onClear,
-}: {
-  disabled: boolean;
-  onClear: () => void;
-}) {
-  const [confirm, setConfirm] = useState(false);
-  if (confirm) {
+  if (loading) {
     return (
-      <div className="flex items-center gap-1">
-        <button
-          onClick={() => {
-            onClear();
-            setConfirm(false);
-          }}
-          className="rounded-lg bg-[color:var(--danger)] px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:-translate-y-0.5 hover:brightness-110"
-        >
-          Clear deck
-        </button>
-        <button
-          onClick={() => setConfirm(false)}
-          className="control px-2.5 py-1.5 text-xs"
-        >
-          Cancel
-        </button>
+      <div className="workspace-panel rounded-lg p-5 text-sm text-text-subtle">
+        Loading public decks
       </div>
     );
   }
+
+  if (decks.length === 0) {
+    return (
+      <div className="workspace-panel rounded-lg p-5 text-sm text-text-subtle">
+        No public decks found.
+      </div>
+    );
+  }
+
   return (
-    <button
-      onClick={() => setConfirm(true)}
-      disabled={disabled}
-      title="Remove all cards"
-      aria-label="Remove all cards"
-      className="control p-2 hover:border-[color:var(--danger)] hover:text-[color:var(--danger)] disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
-    >
-      <TrashIcon />
-    </button>
+    <div className={`grid gap-3 ${compact ? "" : "md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
+      {decks.map((deck) => (
+        <PublicDeckCard key={deck.publicId} deck={deck} />
+      ))}
+    </div>
   );
 }
 
-function TrashIcon() {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      width={16}
-      height={16}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3.5 5.5h13M8 5.5V4a1.5 1.5 0 0 1 1.5-1.5h1A1.5 1.5 0 0 1 12 4v1.5M5 5.5l.8 10a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4l.8-10M8.5 9v5M11.5 9v5" />
-    </svg>
-  );
-}
+function PublicDeckCard({
+  deck,
+}: {
+  deck: PublicDeckSummary;
+}) {
+  const href = `/builder/?publicDeck=${encodeURIComponent(deck.publicId)}`;
+  const hasArt = typeof deck.featuredImage === "string" && deck.featuredImage.length > 0;
+  const artCropLikely = hasArt && deck.featuredImage?.includes("/art_crop/");
+  const viewsLabel = formatDeckViews(deck.viewCount);
 
-function PreviewPlaceholder() {
   return (
-    <div className="flex h-full items-center justify-center bg-surface p-8 text-center">
-      <div className="flex flex-col items-center gap-3 text-text-subtle">
-        <div className="empty-pill flex h-14 w-14 items-center justify-center rounded-full">
-          <svg
-            viewBox="0 0 40 40"
-            width={34}
-            height={34}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.5}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="opacity-70"
-          >
-            <rect x="9" y="5" width="22" height="30" rx="3" />
-            <path d="M13 13h14M13 19h10" />
-          </svg>
-        </div>
-        <div>
-          <div className="text-sm font-medium text-text-muted">
-            No card selected
+    <Link href={href} className="group block min-w-0" aria-label={`Open ${deck.name}`}>
+      <article
+        className={`interactive-card relative min-h-56 overflow-hidden rounded-lg border p-4 shadow-sm ${
+          hasArt
+            ? "border-black/20 bg-slate-950 text-white"
+            : "border-border bg-white/88 text-text"
+        }`}
+      >
+        {hasArt && (
+          <>
+            <div
+              className="absolute inset-0 transition-transform duration-300 group-hover:scale-[1.03]"
+              style={{
+                backgroundImage: `url("${deck.featuredImage}")`,
+                backgroundPosition: artCropLikely ? "center" : "center 18%",
+                backgroundRepeat: "no-repeat",
+                backgroundSize: artCropLikely ? "cover" : "119% auto",
+              }}
+              aria-hidden
+            />
+            <div
+              className="absolute inset-0 bg-[linear-gradient(180deg,rgba(10,16,26,0.30),rgba(10,16,26,0.82)_58%,rgba(10,16,26,0.92))]"
+              aria-hidden
+            />
+          </>
+        )}
+        <div className="relative flex min-h-32 flex-col">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-semibold">
+                {deck.name}
+              </h3>
+              <div
+                className={`mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 text-[11px] ${
+                  hasArt ? "text-white/78" : "text-text-subtle"
+                }`}
+              >
+                <span className="min-w-0">
+                  {deck.cardCount} deck · {deck.sideboardCount} sideboard ·{" "}
+                  {deck.maybeboardCount} maybe
+                </span>
+                <span className="justify-self-end text-right tabular-nums">
+                  {viewsLabel}
+                </span>
+              </div>
+            </div>
           </div>
-          <div className="mt-1 text-xs">Card details appear here.</div>
+
+          <div className="mt-auto pt-5">
+            <div className="mb-3 grid gap-2">
+              <PublicManaCurve curve={deck.manaCurve} dark={hasArt} />
+              <PublicColorBreakdown
+                colors={deck.colorBreakdown}
+                dark={hasArt}
+              />
+            </div>
+
+            <div
+              className={`mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t pt-3 text-[11px] ${
+                hasArt
+                  ? "border-white/18 text-white/70"
+                  : "border-border text-text-subtle"
+              }`}
+            >
+              <span>{DATE_FORMAT.format(new Date(deck.updatedAt))}</span>
+              <span className="ml-auto max-w-full truncate text-right">
+                {deck.authorName}
+              </span>
+            </div>
+          </div>
         </div>
+      </article>
+    </Link>
+  );
+}
+
+function formatDeckViews(viewCount: number | undefined) {
+  const count =
+    typeof viewCount === "number" && Number.isFinite(viewCount)
+      ? Math.max(0, Math.floor(viewCount))
+      : 0;
+  return `${count.toLocaleString()} view${count === 1 ? "" : "s"}`;
+}
+
+function PublicManaCurve({
+  curve,
+  dark,
+}: {
+  curve?: number[];
+  dark: boolean;
+}) {
+  const buckets =
+    Array.isArray(curve) && curve.length > 0 ? curve : [0, 0, 0, 0, 0, 0, 0, 0];
+  const max = Math.max(1, ...buckets);
+  return (
+    <div
+      className={`rounded-md border px-2 py-2 ${
+        dark ? "border-white/16 bg-black/20" : "border-border bg-white/75"
+      }`}
+    >
+      <div className="flex h-9 items-end gap-1">
+        {buckets.map((count, index) => (
+          <div key={index} className="flex min-w-0 flex-1 items-end">
+            <div
+              className={dark ? "w-full rounded-sm bg-white/72" : "accent-bar w-full rounded-sm"}
+              style={{ height: `${(count / max) * 24 + 2}px` }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PublicColorBreakdown({
+  colors,
+  dark,
+}: {
+  colors?: DeckColorBreakdown;
+  dark: boolean;
+}) {
+  const order: Array<keyof DeckColorBreakdown> = ["W", "U", "B", "R", "G", "C"];
+  const values: DeckColorBreakdown = {
+    W: colors?.W ?? 0,
+    U: colors?.U ?? 0,
+    B: colors?.B ?? 0,
+    R: colors?.R ?? 0,
+    G: colors?.G ?? 0,
+    C: colors?.C ?? 0,
+  };
+  const swatches: Record<keyof DeckColorBreakdown, string> = {
+    W: "var(--mana-w)",
+    U: "var(--mana-u)",
+    B: "var(--mana-b)",
+    R: "var(--mana-r)",
+    G: "var(--mana-g)",
+    C: "#d7ddd9",
+  };
+  const total = order.reduce((sum, color) => sum + values[color], 0);
+
+  return (
+    <div
+      className={`rounded-md border px-2 py-2 ${
+        dark ? "border-white/16 bg-black/20" : "border-border bg-white/75"
+      }`}
+    >
+      <div className="flex h-3 overflow-hidden rounded-full bg-white/25 ring-1 ring-black/5">
+        {total === 0 ? (
+          <div className="h-full w-full bg-white/40" />
+        ) : (
+          order.map((color) =>
+            values[color] > 0 ? (
+              <div
+                key={color}
+                style={{
+                  width: `${(values[color] / total) * 100}%`,
+                  background: swatches[color],
+                }}
+              />
+            ) : null
+          )
+        )}
       </div>
     </div>
   );

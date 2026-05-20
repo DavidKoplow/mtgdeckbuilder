@@ -11,6 +11,14 @@ type Props = {
   onSelect: (id: string) => void;
   onCreate: (name?: string) => void;
   onDelete: (id: string) => void;
+  onTogglePublic: (id: string, isPublic: boolean) => void;
+  canCreate?: boolean;
+  canDelete?: boolean;
+  canTogglePublic?: boolean;
+  onCreateBlocked?: () => void;
+  onDeleteBlocked?: () => void;
+  onTogglePublicBlocked?: () => void;
+  footerLabel?: string;
 };
 
 export function DeckSelector({
@@ -21,6 +29,14 @@ export function DeckSelector({
   onSelect,
   onCreate,
   onDelete,
+  onTogglePublic,
+  canCreate = true,
+  canDelete = true,
+  canTogglePublic = true,
+  onCreateBlocked,
+  onDeleteBlocked,
+  onTogglePublicBlocked,
+  footerLabel = "Cloud synced",
 }: Props) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
@@ -57,7 +73,10 @@ export function DeckSelector({
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => onCreate()}
+              onClick={() => {
+                if (canCreate) onCreate();
+                else onCreateBlocked?.();
+              }}
               className="control-primary px-3 py-2 text-xs font-semibold"
             >
               New
@@ -102,7 +121,7 @@ export function DeckSelector({
                     <div className="truncate text-sm font-semibold">{d.name}</div>
                     <div className="mt-0.5 text-[11px] capitalize text-text-subtle">
                       {d.cardCount} cards · {d.sideboardCount} sideboard ·{" "}
-                      {d.format}
+                      {d.maybeboardCount} maybe
                     </div>
                   </div>
                   {confirmingId === d.id ? (
@@ -127,17 +146,54 @@ export function DeckSelector({
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setConfirmingId(d.id);
-                      }}
-                      className="shrink-0 rounded-md px-1.5 py-1 text-text-subtle opacity-0 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100"
-                      title="Delete deck"
-                      aria-label={`Delete ${d.name}`}
+                    <div
+                      className="flex shrink-0 items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      ✕
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (canTogglePublic) {
+                            onTogglePublic(d.id, !d.isPublic);
+                          } else {
+                            onTogglePublicBlocked?.();
+                          }
+                        }}
+                        className={`rounded-md p-1.5 text-text-subtle transition hover:bg-white hover:text-accent disabled:cursor-not-allowed disabled:opacity-30 ${
+                          d.isPublic ? "opacity-100" : "opacity-80"
+                        }`}
+                        title={
+                          canTogglePublic
+                            ? d.isPublic
+                              ? "Make private"
+                              : "Publish deck"
+                            : "Sign in to publish saved decks"
+                        }
+                        aria-label={
+                          d.isPublic
+                            ? `Make ${d.name} private`
+                            : `Publish ${d.name}`
+                        }
+                      >
+                        {d.isPublic ? <PublicIcon /> : <PrivateIcon />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (canDelete) setConfirmingId(d.id);
+                          else onDeleteBlocked?.();
+                        }}
+                        className="rounded-md px-1.5 py-1 text-text-subtle opacity-0 transition hover:bg-white hover:text-[color:var(--danger)] group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                        title={
+                          canDelete
+                            ? "Delete deck"
+                            : "Sign in to manage saved decks"
+                        }
+                        aria-label={`Delete ${d.name}`}
+                      >
+                        ✕
+                      </button>
+                    </div>
                   )}
                 </div>
               </li>
@@ -145,9 +201,47 @@ export function DeckSelector({
           })}
         </ul>
         <div className="border-t border-border bg-surface-raised px-4 py-3 text-[11px] text-text-subtle">
-          Cloud synced
+          {footerLabel}
         </div>
       </aside>
     </>
+  );
+}
+
+function PublicIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      width={15}
+      height={15}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="10" cy="10" r="7" />
+      <path d="M3 10h14M10 3c2 2.1 3 4.4 3 7s-1 4.9-3 7M10 3c-2 2.1-3 4.4-3 7s1 4.9 3 7" />
+    </svg>
+  );
+}
+
+function PrivateIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      width={15}
+      height={15}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="4" y="8" width="12" height="8" rx="2" />
+      <path d="M7 8V6a3 3 0 0 1 6 0v2" />
+    </svg>
   );
 }

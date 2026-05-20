@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
   clearWorkosCodeVerifierBackup,
+  getAppBuilderPath,
   getAppHomePath,
   getAppLoginPath,
   getReturnToFromLocation,
@@ -78,7 +79,7 @@ export function AuthRedirect({ mode }: AuthRedirectProps) {
             <button
               type="button"
               className="control px-3 py-2 text-xs"
-              onClick={() => window.location.assign(getAppHomePath())}
+              onClick={() => window.location.assign(getAppBuilderPath())}
             >
               Back to builder
             </button>

@@ -37,6 +37,11 @@ type VectorSearchMatch = {
   _score: number;
 };
 
+async function requireAuthenticated(ctx: ActionCtx) {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Not authenticated");
+}
+
 export const similarCards = action({
   args: {
     oracleIds: v.array(v.string()),
@@ -50,6 +55,8 @@ export const similarCards = action({
     })
   ),
   handler: async (ctx, args): Promise<SimilarCardMatch[]> => {
+    await requireAuthenticated(ctx);
+
     const oracleIds = uniqueOracleIds(args.oracleIds).slice(0, MAX_SEED_CARDS);
     if (oracleIds.length === 0) return [];
     const candidateOracleIds = args.candidateOracleIds
@@ -116,6 +123,8 @@ export const semanticCards = action({
     })
   ),
   handler: async (ctx, args): Promise<SimilarCardMatch[]> => {
+    await requireAuthenticated(ctx);
+
     const query = args.query.trim();
     if (!query) return [];
 
@@ -166,6 +175,8 @@ export const hybridCards = action({
     })
   ),
   handler: async (ctx, args): Promise<SimilarCardMatch[]> => {
+    await requireAuthenticated(ctx);
+
     const query = args.query?.trim() ?? "";
     const oracleIds = uniqueOracleIds(args.oracleIds).slice(0, MAX_SEED_CARDS);
     if (!query && oracleIds.length === 0) return [];

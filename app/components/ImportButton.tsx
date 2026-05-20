@@ -13,6 +13,7 @@ type Props = {
   onImport: (
     entries: DeckEntry[],
     sideboard: DeckEntry[],
+    maybeboard: DeckEntry[],
     mode: "merge" | "replace"
   ) => void;
   onDeckNameHint?: (name: string) => void;
@@ -82,7 +83,7 @@ export function ImportButton({
 
   function onConfirm() {
     if (!preview) return;
-    onImport(preview.entries, preview.sideboard, mode);
+    onImport(preview.entries, preview.sideboard, preview.maybeboard, mode);
     if (parsedName && onDeckNameHint && mode === "replace") {
       onDeckNameHint(parsedName);
     }
@@ -106,12 +107,18 @@ export function ImportButton({
           name: e.name,
           zone: "sideboard" as const,
         })),
+        ...preview.maybeboard.map((e) => ({
+          quantity: e.quantity,
+          name: e.name,
+          zone: "maybeboard" as const,
+        })),
         ...preview.unresolved,
       ]
     : [];
   const totalResolved =
     (preview?.entries.reduce((n, e) => n + e.quantity, 0) ?? 0) +
-    (preview?.sideboard.reduce((n, e) => n + e.quantity, 0) ?? 0);
+    (preview?.sideboard.reduce((n, e) => n + e.quantity, 0) ?? 0) +
+    (preview?.maybeboard.reduce((n, e) => n + e.quantity, 0) ?? 0);
 
   return (
     <>
@@ -239,7 +246,8 @@ export function ImportButton({
                     disabled={
                       !preview ||
                       (preview.entries.length === 0 &&
-                        preview.sideboard.length === 0)
+                        preview.sideboard.length === 0 &&
+                        preview.maybeboard.length === 0)
                     }
                     className="control-primary px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
                   >
@@ -362,7 +370,11 @@ function ImportPreview({
                   <td className="px-2 py-1 tabular-nums">{l.quantity}</td>
                   <td className="px-2 py-1">{l.name}</td>
                   <td className="px-2 py-1 text-text-subtle">
-                    {l.zone === "sideboard" ? "Sideboard" : "Main"}
+                    {l.zone === "sideboard"
+                      ? "Sideboard"
+                      : l.zone === "maybeboard"
+                        ? "Maybeboard"
+                        : "Main"}
                   </td>
                 </tr>
               );
