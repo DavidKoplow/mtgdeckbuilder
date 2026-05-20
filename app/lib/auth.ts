@@ -70,6 +70,18 @@ export function getWorkosRedirectUri(configuredRedirectUri?: string | null) {
   }
 }
 
+export function getWorkosDevMode(
+  configuredDevMode?: string | null,
+  configuredApiHostname?: string | null
+) {
+  const normalizedDevMode = configuredDevMode?.trim().toLowerCase();
+  if (normalizedDevMode === "true") return true;
+  if (normalizedDevMode === "false") return false;
+
+  // Static exports cannot rely on WorkOS cookies from api.workos.com.
+  return configuredApiHostname?.trim() ? undefined : true;
+}
+
 export function getCurrentReturnTo() {
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }

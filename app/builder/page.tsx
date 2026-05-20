@@ -39,6 +39,7 @@ import {
   PLAYTEST_MOBILE_WARNING_QUERY_PARAM,
   isPlaytestSupportedViewport,
 } from "../lib/playtestSupport";
+import { OPEN_DECK_SELECTOR_QUERY_PARAM } from "../lib/builderNavigation";
 
 type HoverState = {
   src?: string;
@@ -218,6 +219,22 @@ export default function Home() {
 
     const frame = window.requestAnimationFrame(() => {
       setPlaytestWarningVisible(true);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(OPEN_DECK_SELECTOR_QUERY_PARAM)) return;
+
+    url.searchParams.delete(OPEN_DECK_SELECTOR_QUERY_PARAM);
+    const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState(null, "", nextUrl || "/");
+
+    const frame = window.requestAnimationFrame(() => {
+      setSelectorOpen(true);
+      setMobileHeaderOpen(false);
     });
 
     return () => window.cancelAnimationFrame(frame);

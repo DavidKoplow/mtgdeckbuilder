@@ -4,6 +4,7 @@ import { type ReactNode, useCallback, useState } from "react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import {
+  getWorkosDevMode,
   getWorkosRedirectUri,
   handleAuthRedirect,
   restoreWorkosCodeVerifierBackup,
@@ -13,8 +14,10 @@ const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 const workosClientId = process.env.NEXT_PUBLIC_WORKOS_CLIENT_ID;
 const workosRedirectUri = process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI;
 const workosApiHostname = process.env.NEXT_PUBLIC_WORKOS_API_HOSTNAME;
-const workosDevMode =
-  process.env.NEXT_PUBLIC_WORKOS_DEV_MODE === "true" ? true : undefined;
+const workosDevMode = getWorkosDevMode(
+  process.env.NEXT_PUBLIC_WORKOS_DEV_MODE,
+  workosApiHostname
+);
 
 export function Providers({ children }: { children: ReactNode }) {
   const [authStorageReady] = useState(() => {

@@ -6,6 +6,7 @@ import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { AppIcon } from "./components/AppIcon";
 import { AuthButton } from "./components/AuthButton";
+import { OPEN_DECK_SELECTOR_HREF } from "./lib/builderNavigation";
 import type {
   DeckColorBreakdown,
   PublicDeckSummary,
@@ -37,7 +38,12 @@ export default function PublicDecksPage() {
     <div className="app-shell-bg flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="app-header shrink-0 px-3 py-2 sm:px-4 sm:py-3">
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <Link href="/" className="header-brand-button shrink-0">
+          <Link
+            href={OPEN_DECK_SELECTOR_HREF}
+            className="header-brand-button shrink-0"
+            aria-label="Open deck selector"
+            title="Your decks"
+          >
             <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm ring-1 ring-border/70">
               <AppIcon size={26} />
             </span>
@@ -51,7 +57,10 @@ export default function PublicDecksPage() {
             </div>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            <Link href="/builder" className="control px-3 py-2 text-xs">
+            <Link
+              href={OPEN_DECK_SELECTOR_HREF}
+              className="control px-3 py-2 text-xs"
+            >
               Builder
             </Link>
             <AuthButton />
