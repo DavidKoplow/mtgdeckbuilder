@@ -283,32 +283,20 @@ export default function Home() {
             menuContent={
               <div className="mobile-header-deck-summary flex min-w-0 flex-col gap-2">
                 {active ? (
-                  <>
+                  <div className="mobile-menu-deck-row flex min-w-0 items-center gap-2">
                     <DeckNameEditor
                       key={active.id}
                       name={active.name}
                       onRename={(n) => decks.renameDeck(active.id, n)}
                     />
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="header-meta-pill flex-1 justify-center">
-                        <span className="tabular-nums">{activeCardCount}</span>
-                        <span>cards</span>
-                      </span>
-                      <span className="header-meta-pill flex-1 justify-center">
-                        <span className="tabular-nums">
-                          {activeSideboardCount}
-                        </span>
-                        <span>sideboard</span>
-                      </span>
-                      <ClearDeckButton
-                        disabled={
-                          active.entries.length === 0 &&
-                          active.sideboard.length === 0
-                        }
-                        onClear={() => decks.clearDeck(active.id)}
-                      />
-                    </div>
-                  </>
+                    <ClearDeckButton
+                      disabled={
+                        active.entries.length === 0 &&
+                        active.sideboard.length === 0
+                      }
+                      onClear={() => decks.clearDeck(active.id)}
+                    />
+                  </div>
                 ) : (
                   <span className="text-sm text-text-subtle">No active deck</span>
                 )}
@@ -317,39 +305,44 @@ export default function Home() {
             actions={
               <>
                 {active && (
-                  <ImportButton
-                    onImport={(entries, sideboard, mode) =>
-                      decks.importEntries(active.id, entries, sideboard, mode)
-                    }
-                    onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
-                    resolveLines={
-                      offline.offlineActive ? resolveLinesOffline : undefined
-                    }
-                  />
+                  <div className="mobile-menu-action-cell">
+                    <ImportButton
+                      onImport={(entries, sideboard, mode) =>
+                        decks.importEntries(active.id, entries, sideboard, mode)
+                      }
+                      onDeckNameHint={(name) => decks.renameDeck(active.id, name)}
+                      resolveLines={
+                        offline.offlineActive ? resolveLinesOffline : undefined
+                      }
+                    />
+                  </div>
                 )}
                 {active && (
-                  <ExportButton
-                    deck={active}
-                    disabled={
-                      active.entries.length === 0 &&
-                      active.sideboard.length === 0
-                    }
-                  />
+                  <div className="mobile-menu-action-cell">
+                    <ExportButton
+                      deck={active}
+                      disabled={
+                        active.entries.length === 0 &&
+                        active.sideboard.length === 0
+                      }
+                    />
+                  </div>
                 )}
                 {active && active.entries.length > 0 && (
                   <Link
                     href={`/play/?deck=${encodeURIComponent(active.id)}`}
-                    className="control-primary"
+                    className="mobile-menu-action-full control-primary"
                     title="Playtest this deck"
                   >
                     Playtest
                   </Link>
                 )}
-                {active && (
-                  <span className="mx-1 hidden h-6 w-px bg-border lg:block" />
-                )}
-                <SettingsButton offline={offline} />
-                <AuthButton />
+                <div className="mobile-menu-action-cell">
+                  <SettingsButton offline={offline} />
+                </div>
+                <div className="mobile-menu-action-cell">
+                  <AuthButton />
+                </div>
               </>
             }
           />

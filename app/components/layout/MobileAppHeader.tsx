@@ -48,22 +48,22 @@ export function MobileAppHeader({
         >
           <div
             id="mobile-header-menu"
-            className="mobile-header-overlay-panel lg:hidden"
+            className="mobile-header-overlay-panel rainbow-edge lg:hidden"
             role="dialog"
             aria-modal="true"
             aria-label="Mobile menu"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mobile-header-overlay-head flex min-w-0 items-center justify-between gap-2 px-3 py-2.5">
-              <span className="text-xs font-semibold text-text-muted">
-                Actions
-              </span>
+            <div className="mobile-header-overlay-head flex min-w-0 items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="mobile-menu-title">Menu</div>
+              </div>
               <button
                 type="button"
                 onClick={onToggleMenu}
                 aria-label="Close menu"
                 title="Close menu"
-                className="mobile-header-toggle flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/80 bg-surface-subtle text-text-muted transition"
+                className="mobile-header-toggle mobile-menu-close flex shrink-0 items-center justify-center rounded-full border border-border/80 bg-surface-subtle text-text-muted transition"
               >
                 <svg
                   width="18"
@@ -80,12 +80,18 @@ export function MobileAppHeader({
                 </svg>
               </button>
             </div>
-            <div className="mobile-header-menu-body thin-scroll min-w-0 flex-1 overflow-y-auto px-2.5 pb-2.5">
-              <div className="mobile-header-menu min-w-0">
-                {menuContent}
+            <div className="mobile-header-menu-body thin-scroll min-w-0 flex-1 overflow-y-auto">
+              <div className="mobile-menu-section">
+                <div className="mobile-menu-section-label">Active deck</div>
+                <div className="mobile-header-menu min-w-0">
+                  {menuContent}
+                </div>
               </div>
-              <div className="mobile-header-actions grid gap-2 pt-2">
-                {actions}
+              <div className="mobile-menu-section">
+                <div className="mobile-menu-section-label">Actions</div>
+                <div className="mobile-header-actions grid">
+                  {actions}
+                </div>
               </div>
             </div>
           </div>
@@ -102,9 +108,9 @@ export function MobileAppHeader({
           onClick={onOpenDeckSelector}
           aria-label="Open deck list"
           title="Your decks"
-          className="mobile-header-deck-trigger flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border/80 bg-white text-text transition"
+          className="mobile-header-deck-trigger flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-text transition"
         >
-          <AppIcon size={24} className="shadow-sm" />
+          <AppIcon size={40} className="drop-shadow-sm" />
         </button>
         {centerContent ? (
           <div className="mobile-header-center-wrap flex min-w-0 flex-1 justify-center px-1">
