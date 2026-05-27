@@ -312,6 +312,14 @@ export function useDecks(options: UseDecksOptions = {}) {
   const temporaryDeck = temporaryDeckResult
     ? withDeckCounts(temporaryDeckResult as PublicDeck)
     : null;
+  const temporaryDeckOwnedDeckId =
+    temporaryDeckResult?.ownedDeckId ??
+    (temporaryPublicDeckId
+      ? deckSummaries.find(
+          (summary) => summary.publicId === temporaryPublicDeckId
+        )?.id
+      : null) ??
+    null;
   const savedActiveDeck = localDecksActive
     ? visibleOfflineDecks.find((deck) => deck.id === savedActiveId) ?? null
     : activeDeckResult;
@@ -1314,6 +1322,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     canEditActiveDeck: !activeDeckIsTemporary,
     canCopyTemporaryDeck: activeDeckIsTemporary,
     activeDeckIsTemporary,
+    temporaryDeckOwnedDeckId,
     temporaryDeckNotFound:
       viewingTemporaryDeck && temporaryDeckResult === null,
     isLoading: auth.isLoading,

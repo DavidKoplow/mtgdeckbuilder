@@ -2,11 +2,14 @@
 
 import { useDeferredValue, useMemo, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { AppIcon } from "./components/AppIcon";
 import { AuthButton } from "./components/AuthButton";
-import { OPEN_DECK_SELECTOR_HREF } from "./lib/builderNavigation";
+import {
+  OPEN_DECK_SELECTOR_HREF,
+  builderDeckHref,
+} from "./lib/builderNavigation";
 import type {
   DeckColorBreakdown,
   PublicDeckSummary,
@@ -18,6 +21,7 @@ const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
 });
 
 export default function PublicDecksPage() {
+  const auth = useConvexAuth();
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const trimmedSearch = deferredSearch.trim();
@@ -31,6 +35,17 @@ export default function PublicDecksPage() {
   const recentArgs = useMemo(() => ({ limit: 12 }), []);
   const results = useQuery(api.decks.searchPublicDecks, searchArgs);
   const recent = useQuery(api.decks.listRecentPublicDecks, recentArgs);
+  const ownedDecks = useQuery(
+    api.decks.listDecks,
+    auth.isAuthenticated ? {} : "skip"
+  );
+  const ownedDeckByPublicId = useMemo(() => {
+    const byPublicId = new Map<string, string>();
+    for (const deck of ownedDecks ?? []) {
+      if (deck.publicId) byPublicId.set(deck.publicId, deck.id);
+    }
+    return byPublicId;
+  }, [ownedDecks]);
   const showingSearch = trimmedSearch.length > 0;
   const mainDecks = results ?? [];
 
@@ -103,7 +118,11 @@ export default function PublicDecksPage() {
                   </div>
                 </div>
               </div>
-              <DeckList decks={mainDecks} loading={results === undefined} />
+              <DeckList
+                decks={mainDecks}
+                loading={results === undefined}
+                ownedDeckByPublicId={ownedDeckByPublicId}
+              />
             </section>
 
             {showingSearch && (
@@ -113,7 +132,12 @@ export default function PublicDecksPage() {
                     Recently updated
                   </h2>
                 </div>
-                <DeckList compact decks={recent ?? []} loading={recent === undefined} />
+                <DeckList
+                  compact
+                  decks={recent ?? []}
+                  loading={recent === undefined}
+                  ownedDeckByPublicId={ownedDeckByPublicId}
+                />
               </aside>
             )}
           </div>
@@ -126,10 +150,12 @@ export default function PublicDecksPage() {
 function DeckList({
   decks,
   loading,
+  ownedDeckByPublicId,
   compact = false,
 }: {
   decks: PublicDeckSummary[];
   loading: boolean;
+  ownedDeckByPublicId: Map<string, string>;
   compact?: boolean;
 }) {
   if (loading) {
@@ -151,7 +177,11 @@ function DeckList({
   return (
     <div className={`grid gap-3 ${compact ? "" : "md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"}`}>
       {decks.map((deck) => (
-        <PublicDeckCard key={deck.publicId} deck={deck} />
+        <PublicDeckCard
+          key={deck.publicId}
+          deck={deck}
+          ownedDeckId={ownedDeckByPublicId.get(deck.publicId)}
+        />
       ))}
     </div>
   );
@@ -159,10 +189,15 @@ function DeckList({
 
 function PublicDeckCard({
   deck,
+  ownedDeckId,
 }: {
   deck: PublicDeckSummary;
+  ownedDeckId?: string;
 }) {
-  const href = `/builder/?publicDeck=${encodeURIComponent(deck.publicId)}`;
+  const savedDeckId = ownedDeckId ?? deck.ownedDeckId;
+  const href = savedDeckId
+    ? builderDeckHref(savedDeckId)
+    : `/builder/?publicDeck=${encodeURIComponent(deck.publicId)}`;
   const hasArt = typeof deck.featuredImage === "string" && deck.featuredImage.length > 0;
   const artCropLikely = hasArt && deck.featuredImage?.includes("/art_crop/");
   const viewsLabel = formatDeckViews(deck.viewCount);

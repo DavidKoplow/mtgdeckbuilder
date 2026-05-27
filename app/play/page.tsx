@@ -28,9 +28,11 @@ import {
 import { useFinePointer, useMediaQuery } from "../hooks/useMediaQuery";
 import { WORKSPACE_DESKTOP_QUERY } from "../lib/breakpoints";
 import {
-  PLAYTEST_MOBILE_WARNING_REDIRECT,
   isPlaytestSupportedViewport,
+  playtestMobileWarningRedirect,
+  readPlaytestDeckIdFromSearch,
 } from "../lib/playtestSupport";
+import { builderDeckHref } from "../lib/builderNavigation";
 import type { Deck } from "../lib/types";
 
 type Hover = { src?: string; x: number; y: number } | null;
@@ -51,7 +53,11 @@ function usePlaytestAccess(): PlaytestAccess {
       if (warnedRef.current) return;
 
       warnedRef.current = true;
-      router.replace(PLAYTEST_MOBILE_WARNING_REDIRECT);
+      router.replace(
+        playtestMobileWarningRedirect(
+          readPlaytestDeckIdFromSearch(window.location.search)
+        )
+      );
     }
 
     function checkAccess() {
@@ -148,7 +154,7 @@ function PlayDeckContent() {
     );
   }
 
-  return <Playtest deck={deck} />;
+  return <Playtest deck={deck} returnHref={builderDeckHref(deck.id)} />;
 }
 
 export default function PlayPage() {
@@ -172,7 +178,7 @@ export default function PlayPage() {
   );
 }
 
-function Playtest({ deck }: { deck: Deck }) {
+function Playtest({ deck, returnHref }: { deck: Deck; returnHref: string }) {
   const commanderEntry = deck.entries.find((entry) => entry.isCommander);
   const initialMode: PlayMode = commanderEntry ? "commander" : "normal";
   const pt = usePlaytest(deck, initialMode);
@@ -208,7 +214,7 @@ function Playtest({ deck }: { deck: Deck }) {
       >
         <div className="flex min-w-0 items-center justify-between gap-2 lg:hidden">
           <Link
-            href="/builder"
+            href={returnHref}
             className="control flex min-h-11 shrink-0 items-center gap-2 px-3 py-2 text-sm"
           >
             <AppIcon size={20} className="rounded-md" />
@@ -234,7 +240,7 @@ function Playtest({ deck }: { deck: Deck }) {
         >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Link
-            href="/builder"
+            href={returnHref}
             className="control hidden items-center gap-2 px-3 py-2 text-sm lg:flex"
           >
             <AppIcon size={20} className="rounded-md" />
@@ -263,11 +269,33 @@ function Playtest({ deck }: { deck: Deck }) {
         </div>
 
         <div className="mobile-header-actions grid min-w-0 gap-2 text-sm lg:flex lg:flex-wrap lg:items-center lg:justify-end">
-          <LifeCounter life={state.life} onDelta={pt.lifeDelta} onSet={pt.setLife} />
+          <LifeCounter
+            label="Your life"
+            life={state.life}
+            onDelta={pt.lifeDelta}
+            onSet={pt.setLife}
+          />
           <PoisonCounter
+            label="Your poison"
             poison={state.poison}
             onDelta={pt.poisonDelta}
             onSet={pt.setPoison}
+          />
+          <LifeCounter
+            label="Opp life"
+            life={state.opponentLife}
+            onDelta={pt.opponentLifeDelta}
+            onSet={pt.setOpponentLife}
+            decrementLabel="Opponent loses 1 life"
+            incrementLabel="Opponent gains 1 life"
+          />
+          <PoisonCounter
+            label="Opp poison"
+            poison={state.opponentPoison}
+            onDelta={pt.opponentPoisonDelta}
+            onSet={pt.setOpponentPoison}
+            decrementLabel="Remove 1 opponent poison counter"
+            incrementLabel="Add 1 opponent poison counter"
           />
           <div className="flex min-h-11 items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
             <span className="text-text-muted">Turn</span>
@@ -803,21 +831,27 @@ function DropZone({
 }
 
 function LifeCounter({
+  label = "Life",
   life,
   onDelta,
   onSet,
+  decrementLabel = "Lose 1 life",
+  incrementLabel = "Gain 1 life",
 }: {
+  label?: string;
   life: number;
   onDelta: (d: number) => void;
   onSet: (v: number) => void;
+  decrementLabel?: string;
+  incrementLabel?: string;
 }) {
   return (
     <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
-      <span className="text-text-muted">Life</span>
+      <span className="text-text-muted">{label}</span>
       <button
         onClick={() => onDelta(-1)}
         className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-subtle hover:bg-border"
-        aria-label="Lose 1 life"
+        aria-label={decrementLabel}
       >
         −
       </button>
@@ -830,7 +864,7 @@ function LifeCounter({
       <button
         onClick={() => onDelta(+1)}
         className="accent-fill flex h-6 w-6 items-center justify-center rounded-md"
-        aria-label="Gain 1 life"
+        aria-label={incrementLabel}
       >
         +
       </button>
@@ -839,21 +873,27 @@ function LifeCounter({
 }
 
 function PoisonCounter({
+  label = "Poison",
   poison,
   onDelta,
   onSet,
+  decrementLabel = "Remove 1 poison counter",
+  incrementLabel = "Add 1 poison counter",
 }: {
+  label?: string;
   poison: number;
   onDelta: (d: number) => void;
   onSet: (v: number) => void;
+  decrementLabel?: string;
+  incrementLabel?: string;
 }) {
   return (
     <div className="flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-xs">
-      <span className="text-text-muted">Poison</span>
+      <span className="text-text-muted">{label}</span>
       <button
         onClick={() => onDelta(-1)}
         className="flex h-6 w-6 items-center justify-center rounded-md bg-surface-subtle hover:bg-border"
-        aria-label="Remove 1 poison counter"
+        aria-label={decrementLabel}
       >
         −
       </button>
@@ -867,7 +907,7 @@ function PoisonCounter({
       <button
         onClick={() => onDelta(+1)}
         className="accent-fill flex h-6 w-6 items-center justify-center rounded-md"
-        aria-label="Add 1 poison counter"
+        aria-label={incrementLabel}
       >
         +
       </button>

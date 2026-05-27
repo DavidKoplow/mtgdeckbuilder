@@ -46,6 +46,8 @@ export type PlayState = {
   exile: PlayCard[];
   life: number;
   poison: number;
+  opponentLife: number;
+  opponentPoison: number;
   recentTokens: PlayTokenTemplate[];
   mode: PlayMode;
   turn: number;
@@ -140,6 +142,8 @@ function initialState(
     exile: [],
     life,
     poison: 0,
+    opponentLife: startingLife(mode),
+    opponentPoison: 0,
     recentTokens: [],
     mode,
     turn: 1,
@@ -172,6 +176,10 @@ type Action =
   | { type: "set-life"; value: number }
   | { type: "poison"; delta: number }
   | { type: "set-poison"; value: number }
+  | { type: "opponent-life"; delta: number }
+  | { type: "set-opponent-life"; value: number }
+  | { type: "opponent-poison"; delta: number }
+  | { type: "set-opponent-poison"; value: number }
   | { type: "end-turn" }
   | { type: "mulligan" }
   | { type: "keep-hand" }
@@ -323,6 +331,20 @@ function reducer(state: PlayState, action: Action): PlayState {
       return { ...state, poison: normalizeCounter(state.poison + action.delta) };
     case "set-poison":
       return { ...state, poison: normalizeCounter(action.value) };
+    case "opponent-life":
+      return { ...state, opponentLife: state.opponentLife + action.delta };
+    case "set-opponent-life":
+      return { ...state, opponentLife: action.value };
+    case "opponent-poison":
+      return {
+        ...state,
+        opponentPoison: normalizeCounter(state.opponentPoison + action.delta),
+      };
+    case "set-opponent-poison":
+      return {
+        ...state,
+        opponentPoison: normalizeCounter(action.value),
+      };
 
     case "end-turn":
       return {
@@ -475,6 +497,22 @@ export function usePlaytest(deck: Deck, startingMode: PlayMode = "normal") {
     (value: number) => dispatch({ type: "set-poison", value }),
     []
   );
+  const opponentLifeDelta = useCallback(
+    (delta: number) => dispatch({ type: "opponent-life", delta }),
+    []
+  );
+  const setOpponentLife = useCallback(
+    (value: number) => dispatch({ type: "set-opponent-life", value }),
+    []
+  );
+  const opponentPoisonDelta = useCallback(
+    (delta: number) => dispatch({ type: "opponent-poison", delta }),
+    []
+  );
+  const setOpponentPoison = useCallback(
+    (value: number) => dispatch({ type: "set-opponent-poison", value }),
+    []
+  );
   const endTurn = useCallback(() => dispatch({ type: "end-turn" }), []);
   const mulligan = useCallback(() => dispatch({ type: "mulligan" }), []);
   const keepHand = useCallback(() => dispatch({ type: "keep-hand" }), []);
@@ -533,6 +571,10 @@ export function usePlaytest(deck: Deck, startingMode: PlayMode = "normal") {
     setLife,
     poisonDelta,
     setPoison,
+    opponentLifeDelta,
+    setOpponentLife,
+    opponentPoisonDelta,
+    setOpponentPoison,
     endTurn,
     mulligan,
     keepHand,

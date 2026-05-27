@@ -135,6 +135,7 @@ export type DeckColorBreakdown = {
 
 export type PublicDeckSummary = {
   publicId: string;
+  ownedDeckId?: string;
   name: string;
   format: string;
   cardCount: number;
@@ -156,5 +157,6 @@ export type PublicDeckSummary = {
 
 export type PublicDeck = Omit<Deck, "publicId"> & {
   publicId: string;
+  ownedDeckId?: string;
   authorName: string;
 };

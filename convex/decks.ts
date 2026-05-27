@@ -90,6 +90,7 @@ const publicDeckColorBreakdown = v.object({
 
 const publicDeckSummary = v.object({
   publicId: v.string(),
+  ownedDeckId: v.optional(v.string()),
   name: v.string(),
   format: v.string(),
   cardCount: v.number(),
@@ -112,6 +113,7 @@ const publicDeckSummary = v.object({
 const publicDeck = v.object({
   id: v.string(),
   publicId: v.string(),
+  ownedDeckId: v.optional(v.string()),
   isPublic: v.boolean(),
   name: v.string(),
   format: v.string(),
@@ -162,6 +164,7 @@ type Deck = {
 
 type PublicDeckSummary = {
   publicId: string;
+  ownedDeckId?: string;
   name: string;
   format: string;
   cardCount: number;
@@ -197,6 +200,7 @@ type DeckColorBreakdown = {
 
 type PublicDeck = Omit<Deck, "publicId"> & {
   publicId: string;
+  ownedDeckId?: string;
   authorName: string;
 };
 
@@ -355,6 +359,7 @@ export const listRecentPublicDecks = query({
   returns: v.array(publicDeckSummary),
   handler: async (ctx, args): Promise<PublicDeckSummary[]> => {
     const limit = clampPublicDeckLimit(args.limit);
+    const viewerUserId = await getUserId(ctx);
     const results: PublicDeckSummary[] = [];
 
     for await (const deckDoc of ctx.db
@@ -362,7 +367,15 @@ export const listRecentPublicDecks = query({
       .withIndex("by_updated")
       .order("desc")) {
       if (!isDeckPublic(deckDoc)) continue;
-      results.push(await publicDeckSummaryFromDoc(ctx, deckDoc));
+      results.push(
+        await publicDeckSummaryFromDoc(
+          ctx,
+          deckDoc,
+          [],
+          undefined,
+          viewerUserId
+        )
+      );
       if (results.length >= limit) break;
     }
 
@@ -378,6 +391,7 @@ export const searchPublicDecks = query({
   returns: v.array(publicDeckSummary),
   handler: async (ctx, args): Promise<PublicDeckSummary[]> => {
     const normalizedQuery = normalizeSearchText(args.query);
+    const viewerUserId = await getUserId(ctx);
     if (!normalizedQuery) {
       const limit = clampPublicDeckLimit(args.limit);
       const results: PublicDeckSummary[] = [];
@@ -386,7 +400,15 @@ export const searchPublicDecks = query({
         .withIndex("by_updated")
         .order("desc")) {
         if (!isDeckPublic(deckDoc)) continue;
-        results.push(await publicDeckSummaryFromDoc(ctx, deckDoc));
+        results.push(
+          await publicDeckSummaryFromDoc(
+            ctx,
+            deckDoc,
+            [],
+            undefined,
+            viewerUserId
+          )
+        );
         if (results.length >= limit) break;
       }
       return results;
@@ -434,7 +456,8 @@ export const searchPublicDecks = query({
           ctx,
           deckDoc,
           matchingCards,
-          previewData
+          previewData,
+          viewerUserId
         )
       );
       if (results.length >= limit) break;
@@ -453,6 +476,7 @@ export const getPublicDeck = query({
     const deckDoc = await getPublicDeckDoc(ctx, args.publicId);
     if (!deckDoc || !isDeckPublic(deckDoc)) return null;
 
+    const viewerUserId = await getUserId(ctx);
     const publicId = publicIdForDeck(deckDoc);
     const cards = deckCardRefs(deckDoc);
     const sideboardCards = deckSideboardRefs(deckDoc);
@@ -464,6 +488,9 @@ export const getPublicDeck = query({
     return {
       id: temporaryPublicDeckId(publicId),
       publicId,
+      ...(viewerUserId === deckDoc.userId
+        ? { ownedDeckId: deckDoc.deckId }
+        : {}),
       isPublic: true,
       name: deckDoc.name,
       format: deckDoc.format,
@@ -1039,7 +1066,8 @@ async function publicDeckSummaryFromDoc(
   ctx: QueryCtx,
   deckDoc: Doc<"userDecks">,
   matchingCards: PublicDeckPreviewCard[] = [],
-  knownDisplayData?: PublicDeckDisplayData
+  knownDisplayData?: PublicDeckDisplayData,
+  viewerUserId?: string | null
 ): Promise<PublicDeckSummary> {
   const cards = deckCardRefs(deckDoc);
   const sideboardCards = deckSideboardRefs(deckDoc);
@@ -1048,6 +1076,9 @@ async function publicDeckSummaryFromDoc(
 
   return {
     publicId: publicIdForDeck(deckDoc),
+    ...(viewerUserId === deckDoc.userId
+      ? { ownedDeckId: deckDoc.deckId }
+      : {}),
     name: deckDoc.name,
     format: deckDoc.format,
     cardCount: deckDoc.cardCount ?? countCards(cards),

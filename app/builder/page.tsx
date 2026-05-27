@@ -39,7 +39,10 @@ import {
   PLAYTEST_MOBILE_WARNING_QUERY_PARAM,
   isPlaytestSupportedViewport,
 } from "../lib/playtestSupport";
-import { OPEN_DECK_SELECTOR_QUERY_PARAM } from "../lib/builderNavigation";
+import {
+  OPEN_DECK_SELECTOR_QUERY_PARAM,
+  SAVED_DECK_QUERY_PARAM,
+} from "../lib/builderNavigation";
 
 type HoverState = {
   src?: string;
@@ -59,10 +62,21 @@ function readTemporaryPublicDeckId(): string | null {
   return value?.trim() || null;
 }
 
+function readSavedDeckId(): string | null {
+  if (typeof window === "undefined") return null;
+  const value = new URLSearchParams(window.location.search).get(
+    SAVED_DECK_QUERY_PARAM
+  );
+  return value?.trim() || null;
+}
+
 export default function Home() {
   const offline = useOfflineMode();
   const [temporaryPublicDeckId, setTemporaryPublicDeckId] = useState(
     readTemporaryPublicDeckId
+  );
+  const [requestedSavedDeckId, setRequestedSavedDeckId] = useState(
+    readSavedDeckId
   );
   const decks = useDecks({
     offlineEnabled: offline.settings.enabled,
@@ -101,23 +115,33 @@ export default function Home() {
     [decks]
   );
 
-  const clearTemporaryDeckRoute = useCallback(() => {
-    setTemporaryPublicDeckId(null);
+  const clearBuilderRouteParams = useCallback((...params: string[]) => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    if (!url.searchParams.has(PUBLIC_DECK_QUERY_PARAM)) return;
-    url.searchParams.delete(PUBLIC_DECK_QUERY_PARAM);
+    let changed = false;
+    for (const param of params) {
+      if (!url.searchParams.has(param)) continue;
+      url.searchParams.delete(param);
+      changed = true;
+    }
+    if (!changed) return;
     const nextUrl = `${url.pathname}${url.search}${url.hash}`;
     window.history.replaceState(null, "", nextUrl || "/");
   }, []);
 
+  const clearTemporaryDeckRoute = useCallback(() => {
+    setTemporaryPublicDeckId(null);
+    clearBuilderRouteParams(PUBLIC_DECK_QUERY_PARAM);
+  }, [clearBuilderRouteParams]);
+
   useEffect(() => {
-    function syncTemporaryDeckId() {
+    function syncRouteDeckIds() {
       setTemporaryPublicDeckId(readTemporaryPublicDeckId());
+      setRequestedSavedDeckId(readSavedDeckId());
     }
-    window.addEventListener("popstate", syncTemporaryDeckId);
-    syncTemporaryDeckId();
-    return () => window.removeEventListener("popstate", syncTemporaryDeckId);
+    window.addEventListener("popstate", syncRouteDeckIds);
+    syncRouteDeckIds();
+    return () => window.removeEventListener("popstate", syncRouteDeckIds);
   }, []);
 
   const missingTemporaryDeckRef = useRef<string | null>(null);
@@ -133,6 +157,57 @@ export default function Home() {
     missingTemporaryDeckRef.current = temporaryPublicDeckId;
     decks.showNotice("That public deck is no longer available.");
   }, [decks, temporaryPublicDeckId]);
+
+  const handledOwnedPublicDeckRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ownedDeckId = decks.temporaryDeckOwnedDeckId;
+    if (
+      !temporaryPublicDeckId ||
+      !decks.hydrated ||
+      !ownedDeckId ||
+      handledOwnedPublicDeckRef.current === temporaryPublicDeckId
+    ) {
+      return;
+    }
+
+    handledOwnedPublicDeckRef.current = temporaryPublicDeckId;
+    decks.setActive(ownedDeckId);
+    clearBuilderRouteParams(PUBLIC_DECK_QUERY_PARAM);
+
+    window.requestAnimationFrame(() => {
+      setTemporaryPublicDeckId(null);
+    });
+  }, [clearBuilderRouteParams, decks, temporaryPublicDeckId]);
+
+  const missingSavedDeckRef = useRef<string | null>(null);
+  const handledSavedDeckRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedSavedDeckId || !decks.hydrated) return;
+    if (handledSavedDeckRef.current === requestedSavedDeckId) return;
+
+    const savedDeckExists = decks.decks.some(
+      (deck) => deck.id === requestedSavedDeckId
+    );
+
+    if (!savedDeckExists) {
+      handledSavedDeckRef.current = requestedSavedDeckId;
+      if (missingSavedDeckRef.current !== requestedSavedDeckId) {
+        missingSavedDeckRef.current = requestedSavedDeckId;
+        decks.showNotice("That deck is not available in your saved decks.");
+      }
+      clearBuilderRouteParams(SAVED_DECK_QUERY_PARAM);
+      return;
+    }
+
+    handledSavedDeckRef.current = requestedSavedDeckId;
+    if (decks.activeId !== requestedSavedDeckId) {
+      decks.setActive(requestedSavedDeckId);
+    }
+    clearBuilderRouteParams(
+      SAVED_DECK_QUERY_PARAM,
+      PUBLIC_DECK_QUERY_PARAM
+    );
+  }, [clearBuilderRouteParams, decks, requestedSavedDeckId]);
 
   useEffect(() => {
     function endDrag() {
