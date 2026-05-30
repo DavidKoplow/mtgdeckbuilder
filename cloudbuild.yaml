@@ -18,6 +18,7 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
+      - --progress=plain
       - -f
       - Dockerfile
       - -t

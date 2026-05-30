@@ -8,15 +8,21 @@ RUN git clone --filter=blob:none "${MAGE_REPO}" . \
     && git checkout "${MAGE_REF}"
 COPY webgateway/Mage.WebGateway ./Mage.WebGateway
 
-RUN mkdir -p /out/lib /out/gateway /out/server \
-    && sed -i '/<module>Mage.Server<\/module>/a\        <module>Mage.WebGateway</module>' pom.xml \
-    && mvn -pl Mage.WebGateway,Mage.Server,Mage.Sets -am -DskipTests install \
-    && mvn -pl Mage.Server -DskipTests assembly:single \
-    && mvn -pl Mage.WebGateway,Mage.Sets -DskipTests org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=runtime -DoutputDirectory=/out/lib \
-    && cp Mage/target/mage.jar Mage.Common/target/mage-common.jar Mage.Sets/target/mage-sets.jar /out/lib/ \
-    && cp Mage.WebGateway/target/mage-web-gateway.jar /out/gateway/mage-web-gateway.jar \
-    && cd /out/server \
-    && jar xf /src/Mage.Server/target/mage-server.zip
+RUN set -eu; \
+    mkdir -p /out/lib /out/gateway /out/server; \
+    sed -i '/<module>Mage.Server<\/module>/a\        <module>Mage.WebGateway</module>' pom.xml; \
+    (while true; do echo "MAGE build is still running; Mage.Sets compiles about 32k card source files."; sleep 30; done) & \
+    heartbeat_pid="$!"; \
+    trap 'kill "$heartbeat_pid" >/dev/null 2>&1 || true' EXIT; \
+    mvn -pl Mage.WebGateway,Mage.Server,Mage.Sets -am -DskipTests install; \
+    mvn -pl Mage.Server -DskipTests assembly:single; \
+    mvn -pl Mage.WebGateway,Mage.Sets -DskipTests org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=runtime -DoutputDirectory=/out/lib; \
+    kill "$heartbeat_pid" >/dev/null 2>&1 || true; \
+    trap - EXIT; \
+    cp Mage/target/mage.jar Mage.Common/target/mage-common.jar Mage.Sets/target/mage-sets.jar /out/lib/; \
+    cp Mage.WebGateway/target/mage-web-gateway.jar /out/gateway/mage-web-gateway.jar; \
+    cd /out/server; \
+    jar xf /src/Mage.Server/target/mage-server.zip
 
 FROM eclipse-temurin:8-jre
 
