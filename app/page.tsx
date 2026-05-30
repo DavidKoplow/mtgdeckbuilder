@@ -19,21 +19,38 @@ const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 });
+const DATE_ONLY_FORMAT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+});
+type DeckBrowserTab = "public" | "official";
+type PublicDeckSource = "community" | "official";
+const DECK_PAGE_SIZE = 36;
 
 export default function PublicDecksPage() {
   const auth = useConvexAuth();
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<DeckBrowserTab>("public");
+  const [deckPage, setDeckPage] = useState(1);
   const deferredSearch = useDeferredValue(search);
   const trimmedSearch = deferredSearch.trim();
+  const activeSource: PublicDeckSource =
+    activeTab === "official" ? "official" : "community";
+  const activeTabLabel =
+    activeTab === "official" ? "Official MTG Decks" : "Public Decks";
   const searchArgs = useMemo(
     () => ({
       query: trimmedSearch,
-      limit: 36,
+      limit: DECK_PAGE_SIZE,
+      page: deckPage,
+      source: activeSource,
     }),
-    [trimmedSearch]
+    [activeSource, deckPage, trimmedSearch]
   );
-  const recentArgs = useMemo(() => ({ limit: 12 }), []);
-  const results = useQuery(api.decks.searchPublicDecks, searchArgs);
+  const recentArgs = useMemo(
+    () => ({ limit: 12, source: activeSource }),
+    [activeSource]
+  );
+  const results = useQuery(api.decks.searchPublicDeckPage, searchArgs);
   const recent = useQuery(api.decks.listRecentPublicDecks, recentArgs);
   const ownedDecks = useQuery(
     api.decks.listDecks,
@@ -47,7 +64,18 @@ export default function PublicDecksPage() {
     return byPublicId;
   }, [ownedDecks]);
   const showingSearch = trimmedSearch.length > 0;
-  const mainDecks = results ?? [];
+  const mainDecks = results?.decks ?? [];
+  const hasNextPage = results?.hasNextPage === true;
+
+  function selectTab(tab: DeckBrowserTab) {
+    setActiveTab(tab);
+    setDeckPage(1);
+  }
+
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    setDeckPage(1);
+  }
 
   return (
     <div className="app-shell-bg flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -67,7 +95,7 @@ export default function PublicDecksPage() {
                 magicaldeckgatherer
               </div>
               <div className="text-[11px] font-medium text-text-subtle">
-                Public decks
+                Deck library
               </div>
             </div>
           </Link>
@@ -87,13 +115,37 @@ export default function PublicDecksPage() {
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
           <section className="workspace-panel rainbow-edge rounded-lg p-3 sm:p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div className="inline-flex shrink-0 rounded-md border border-border bg-white/70 p-1 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => selectTab("public")}
+                  className={`rounded px-3 py-2 transition ${
+                    activeTab === "public"
+                      ? "bg-surface-raised text-text shadow-sm"
+                      : "text-text-subtle hover:text-text"
+                  }`}
+                >
+                  Public Decks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectTab("official")}
+                  className={`rounded px-3 py-2 transition ${
+                    activeTab === "official"
+                      ? "bg-surface-raised text-text shadow-sm"
+                      : "text-text-subtle hover:text-text"
+                  }`}
+                >
+                  Official MTG Decks
+                </button>
+              </div>
               <label className="min-w-0 flex-1">
-                <span className="sr-only">Search public decks</span>
+                <span className="sr-only">Search {activeTabLabel}</span>
                 <input
                   type="search"
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search public decks"
+                  onChange={(event) => handleSearchChange(event.target.value)}
+                  placeholder={`Search ${activeTabLabel}`}
                   className="input min-h-11 text-sm"
                 />
               </label>
@@ -109,20 +161,36 @@ export default function PublicDecksPage() {
               <div className="mb-2 flex items-end justify-between gap-3">
                 <div>
                   <h1 className="text-lg font-semibold text-text">
-                    {showingSearch ? "Search results" : "Recently updated"}
+                    {showingSearch ? "Search results" : activeTabLabel}
                   </h1>
                   <div className="text-xs text-text-subtle">
                     {results === undefined
-                      ? "Loading"
-                      : `${mainDecks.length} deck${mainDecks.length === 1 ? "" : "s"}`}
+                        ? "Loading"
+                        : `${mainDecks.length} deck${mainDecks.length === 1 ? "" : "s"} · Page ${deckPage}`}
                   </div>
                 </div>
+                <DeckPagination
+                  page={deckPage}
+                  loading={results === undefined}
+                  hasNextPage={hasNextPage}
+                  onPageChange={setDeckPage}
+                />
               </div>
               <DeckList
                 decks={mainDecks}
                 loading={results === undefined}
                 ownedDeckByPublicId={ownedDeckByPublicId}
+                emptyLabel={`No ${activeTabLabel.toLowerCase()} found.`}
+                loadingLabel={`Loading ${activeTabLabel.toLowerCase()}`}
               />
+              <div className="mt-3">
+                <DeckPagination
+                  page={deckPage}
+                  loading={results === undefined}
+                  hasNextPage={hasNextPage}
+                  onPageChange={setDeckPage}
+                />
+              </div>
             </section>
 
             {showingSearch && (
@@ -137,6 +205,8 @@ export default function PublicDecksPage() {
                   decks={recent ?? []}
                   loading={recent === undefined}
                   ownedDeckByPublicId={ownedDeckByPublicId}
+                  emptyLabel={`No recent ${activeTabLabel.toLowerCase()} found.`}
+                  loadingLabel={`Loading recent ${activeTabLabel.toLowerCase()}`}
                 />
               </aside>
             )}
@@ -152,16 +222,20 @@ function DeckList({
   loading,
   ownedDeckByPublicId,
   compact = false,
+  emptyLabel = "No public decks found.",
+  loadingLabel = "Loading public decks",
 }: {
   decks: PublicDeckSummary[];
   loading: boolean;
   ownedDeckByPublicId: Map<string, string>;
   compact?: boolean;
+  emptyLabel?: string;
+  loadingLabel?: string;
 }) {
   if (loading) {
     return (
       <div className="workspace-panel rounded-lg p-5 text-sm text-text-subtle">
-        Loading public decks
+        {loadingLabel}
       </div>
     );
   }
@@ -169,7 +243,7 @@ function DeckList({
   if (decks.length === 0) {
     return (
       <div className="workspace-panel rounded-lg p-5 text-sm text-text-subtle">
-        No public decks found.
+        {emptyLabel}
       </div>
     );
   }
@@ -183,6 +257,42 @@ function DeckList({
           ownedDeckId={ownedDeckByPublicId.get(deck.publicId)}
         />
       ))}
+    </div>
+  );
+}
+
+function DeckPagination({
+  page,
+  loading,
+  hasNextPage,
+  onPageChange,
+}: {
+  page: number;
+  loading: boolean;
+  hasNextPage: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.max(1, page - 1))}
+        disabled={page <= 1 || loading}
+        className="control px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Previous
+      </button>
+      <span className="min-w-16 text-center text-xs font-semibold text-text-subtle">
+        Page {page}
+      </span>
+      <button
+        type="button"
+        onClick={() => onPageChange(page + 1)}
+        disabled={!hasNextPage || loading}
+        className="control px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Next
+      </button>
     </div>
   );
 }
@@ -201,6 +311,13 @@ function PublicDeckCard({
   const hasArt = typeof deck.featuredImage === "string" && deck.featuredImage.length > 0;
   const artCropLikely = hasArt && deck.featuredImage?.includes("/art_crop/");
   const viewsLabel = formatDeckViews(deck.viewCount);
+  const sourceLabel = [deck.sourceDeckType, deck.sourceDeckCode]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" · ");
+  const countsLabel = `${deck.cardCount} deck · ${deck.sideboardCount} sideboard · ${deck.maybeboardCount} maybe`;
+  const dateLabel = deck.sourceReleaseDate
+    ? DATE_ONLY_FORMAT.format(new Date(`${deck.sourceReleaseDate}T00:00:00`))
+    : DATE_FORMAT.format(new Date(deck.updatedAt));
 
   return (
     <Link href={href} className="group block min-w-0" aria-label={`Open ${deck.name}`}>
@@ -241,8 +358,7 @@ function PublicDeckCard({
                 }`}
               >
                 <span className="min-w-0">
-                  {deck.cardCount} deck · {deck.sideboardCount} sideboard ·{" "}
-                  {deck.maybeboardCount} maybe
+                  {sourceLabel ? `${sourceLabel} · ${countsLabel}` : countsLabel}
                 </span>
                 <span className="justify-self-end text-right tabular-nums">
                   {viewsLabel}
@@ -267,7 +383,7 @@ function PublicDeckCard({
                   : "border-border text-text-subtle"
               }`}
             >
-              <span>{DATE_FORMAT.format(new Date(deck.updatedAt))}</span>
+              <span>{dateLabel}</span>
               <span className="ml-auto max-w-full truncate text-right">
                 {deck.authorName}
               </span>

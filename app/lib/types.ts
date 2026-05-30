@@ -97,6 +97,7 @@ export type DeckEntry = {
   set?: string;
   collectorNumber?: string;
   priceUsd?: number;
+  legalities?: Record<string, string>;
 };
 
 export type DeckZone = "main" | "sideboard" | "maybeboard";
@@ -144,6 +145,15 @@ export type PublicDeckSummary = {
   createdAt: number;
   updatedAt: number;
   authorName: string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceUrl?: string;
+  sourceDeckCode?: string;
+  sourceDeckFileName?: string;
+  sourceDeckType?: string;
+  sourceReleaseDate?: string;
+  sourceUpdatedAt?: number;
+  sourceVersion?: string;
   viewCount: number;
   matchingCards: PublicDeckPreviewCard[];
   previewCards: PublicDeckPreviewCard[];
@@ -159,4 +169,13 @@ export type PublicDeck = Omit<Deck, "publicId"> & {
   publicId: string;
   ownedDeckId?: string;
   authorName: string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceUrl?: string;
+  sourceDeckCode?: string;
+  sourceDeckFileName?: string;
+  sourceDeckType?: string;
+  sourceReleaseDate?: string;
+  sourceUpdatedAt?: number;
+  sourceVersion?: string;
 };

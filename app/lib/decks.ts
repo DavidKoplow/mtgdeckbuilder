@@ -11,7 +11,13 @@ import type {
   PublicDeck,
   ScryfallCard,
 } from "./types";
-import { getCardImage, getCardsByIdentifiers } from "./scryfall";
+import { normalizeDeckFormat } from "./deckFormats";
+import {
+  getCardImage,
+  getCardsByIdentifiers,
+  type CollectionIdentifier,
+} from "./scryfall";
+import { publicIdFromTemporaryDeckId } from "./builderNavigation";
 import {
   cacheNormalArtForDecks,
   clearSyncedDeckChanges,
@@ -172,6 +178,7 @@ export function cardToEntry(card: ScryfallCard, quantity = 1): DeckEntry {
     set: card.set,
     collectorNumber: card.collector_number,
     priceUsd: Number.isFinite(priceUsd) ? priceUsd : undefined,
+    legalities: card.legalities,
   };
 }
 
@@ -185,7 +192,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     offlineEnabled || localDecksActive || auth.isAuthenticated;
   const online = options.online !== false;
   const temporaryPublicDeckId = options.temporaryPublicDeckId ?? null;
-  const viewingTemporaryDeck = temporaryPublicDeckId !== null;
+  const viewingTemporaryPublicDeck = temporaryPublicDeckId !== null;
   const onOfflineSyncingChange = options.onOfflineSyncingChange;
   const onPendingDeckChangesChange = options.onPendingDeckChangesChange;
   const [offlineSnapshot, setOfflineSnapshot] =
@@ -323,8 +330,8 @@ export function useDecks(options: UseDecksOptions = {}) {
   const savedActiveDeck = localDecksActive
     ? visibleOfflineDecks.find((deck) => deck.id === savedActiveId) ?? null
     : activeDeckResult;
-  const activeDeck = viewingTemporaryDeck ? temporaryDeck : savedActiveDeck;
-  const activeId = viewingTemporaryDeck
+  const activeDeck = viewingTemporaryPublicDeck ? temporaryDeck : savedActiveDeck;
+  const activeId = viewingTemporaryPublicDeck
     ? temporaryDeck?.id ??
       (temporaryPublicDeckId ? `public:${temporaryPublicDeckId}` : null)
     : savedActiveId;
@@ -486,7 +493,7 @@ export function useDecks(options: UseDecksOptions = {}) {
   }, [notice]);
 
   const temporaryDeckLoaded =
-    !viewingTemporaryDeck || temporaryDeckResult !== undefined;
+    !viewingTemporaryPublicDeck || temporaryDeckResult !== undefined;
   const hydrated =
     (localDecksActive
       ? offlineDecksLoaded
@@ -732,17 +739,18 @@ export function useDecks(options: UseDecksOptions = {}) {
   const setFormat = useCallback(
     async (id: string, format: string) => {
       if (!canEditDeck(id)) return;
+      const normalizedFormat = normalizeDeckFormat(format);
 
       if (localDecksActive) {
         await updateOfflineDeck(id, (deck) => ({
           ...deck,
-          format,
+          format: normalizedFormat,
           updatedAt: Date.now(),
         }));
         return;
       }
       if (!auth.isAuthenticated) return;
-      await setFormatMutation({ deckId: id, format });
+      await setFormatMutation({ deckId: id, format: normalizedFormat });
     },
     [
       auth.isAuthenticated,
@@ -1117,28 +1125,36 @@ export function useDecks(options: UseDecksOptions = {}) {
       const deck = activeDeckRef.current;
       if (!deck || deck.id !== deckId) return;
 
-      const needIds = [
+      const entriesNeedingData = dedupeEntriesByCardId([
         ...deck.entries,
         ...(deck.sideboard ?? []),
         ...(deck.maybeboard ?? []),
-      ]
-        .filter(
-          (entry) => entry.priceUsd === undefined || entry.rarity === undefined
-        )
-        .map((entry) => entry.cardId);
-      if (needIds.length === 0) return;
+      ]).filter(
+          (entry) =>
+            entry.priceUsd === undefined ||
+            entry.rarity === undefined ||
+            entry.legalities === undefined
+        );
+      if (entriesNeedingData.length === 0) return;
+      const identifiers = entriesNeedingData.map(identifierForEntry);
+      const loadCards = async (nextIdentifiers: CollectionIdentifier[]) =>
+        offlineActive
+          ? await import("./offline").then(({ getOfflineCardsByIdentifiers }) =>
+              getOfflineCardsByIdentifiers(nextIdentifiers)
+            )
+          : await getCardsByIdentifiers(nextIdentifiers);
 
       if (localDecksActive) {
         try {
-          const cards = offlineActive
-            ? await import("./offline").then(({ getOfflineCardsByIdentifiers }) =>
-                getOfflineCardsByIdentifiers(needIds.map((id) => ({ id })))
-              )
-            : await getCardsByIdentifiers(needIds.map((id) => ({ id })));
-          if (cards.length === 0) return;
-          const cardsById = new Map(cards.map((card) => [card.id, card]));
+          const cards = await loadCards(identifiers);
+          const cardsByEntryId = await completeEntryCardMap(
+            entriesNeedingData,
+            cards,
+            loadCards
+          );
+          if (cardsByEntryId.size === 0) return;
           const hydrateEntry = (entry: DeckEntry) => {
-            const card = cardsById.get(entry.cardId);
+            const card = cardsByEntryId.get(entry.cardId);
             if (!card) return entry;
             const usd = card.prices?.usd;
             const priceUsd = usd != null && usd !== "" ? Number(usd) : undefined;
@@ -1148,6 +1164,7 @@ export function useDecks(options: UseDecksOptions = {}) {
               priceUsd:
                 entry.priceUsd ??
                 (Number.isFinite(priceUsd) ? priceUsd : undefined),
+              legalities: entry.legalities ?? card.legalities,
             };
           };
           await updateOfflineDeck(deckId, (currentDeck) => ({
@@ -1169,21 +1186,33 @@ export function useDecks(options: UseDecksOptions = {}) {
 
       if (!auth.isAuthenticated) return;
       try {
-        const cards = await getCardsByIdentifiers(needIds.map((id) => ({ id })));
-        if (cards.length === 0) return;
+        const cards = await loadCards(identifiers);
+        const cardsByEntryId = await completeEntryCardMap(
+          entriesNeedingData,
+          cards,
+          loadCards
+        );
+        if (cardsByEntryId.size === 0) return;
 
-        const cardData = cards
-          .map((card) => {
+        const cardData = entriesNeedingData
+          .map((entry) => {
+            const card = cardsByEntryId.get(entry.cardId);
+            if (!card) return null;
             const raw = card.prices?.usd;
             const priceUsd = raw != null && raw !== "" ? Number(raw) : undefined;
             return {
-              cardId: card.id,
+              cardId: entry.cardId,
               priceUsd: Number.isFinite(priceUsd) ? priceUsd : undefined,
               rarity: card.rarity,
+              legalities: card.legalities,
             };
           })
+          .filter((data): data is NonNullable<typeof data> => data !== null)
           .filter(
-            (data) => data.priceUsd !== undefined || data.rarity !== undefined
+            (data) =>
+              data.priceUsd !== undefined ||
+              data.rarity !== undefined ||
+              data.legalities !== undefined
           );
 
         if (cardData.length > 0) {
@@ -1324,7 +1353,7 @@ export function useDecks(options: UseDecksOptions = {}) {
     activeDeckIsTemporary,
     temporaryDeckOwnedDeckId,
     temporaryDeckNotFound:
-      viewingTemporaryDeck && temporaryDeckResult === null,
+      viewingTemporaryPublicDeck && temporaryDeckResult === null,
     isLoading: auth.isLoading,
     defaultDeckPublic,
     setDefaultDeckPublic,
@@ -1358,20 +1387,28 @@ export function useDecks(options: UseDecksOptions = {}) {
 export function useDeck(deckId: string | null) {
   const auth = useConvexAuth();
   const localDecksActive = !auth.isLoading && !auth.isAuthenticated;
+  const temporaryPublicId = deckId ? publicIdFromTemporaryDeckId(deckId) : null;
+  const isTemporaryPublicDeck = temporaryPublicId !== null;
   const [offlineSnapshot, setOfflineSnapshot] =
     useState<OfflineDeckSnapshot | null>(null);
   const deck = useQuery(
     api.decks.get,
-    auth.isAuthenticated && deckId ? { deckId } : "skip"
+    auth.isAuthenticated && deckId && !isTemporaryPublicDeck
+      ? { deckId }
+      : "skip"
+  );
+  const publicDeck = useQuery(
+    api.decks.getPublicDeck,
+    temporaryPublicId ? { publicId: temporaryPublicId } : "skip"
   );
   const localDeck =
-    localDecksActive && deckId
+    localDecksActive && deckId && !isTemporaryPublicDeck
       ? offlineSnapshot?.decks.find((candidate) => candidate.id === deckId) ??
         null
       : null;
 
   useEffect(() => {
-    if (!localDecksActive || !deckId) return;
+    if (!localDecksActive || !deckId || isTemporaryPublicDeck) return;
     let cancelled = false;
     loadOfflineDeckSnapshot()
       .then((snapshot) => {
@@ -1383,18 +1420,28 @@ export function useDeck(deckId: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [deckId, localDecksActive]);
+  }, [deckId, isTemporaryPublicDeck, localDecksActive]);
+
+  const resolvedDeck = isTemporaryPublicDeck
+    ? publicDeck
+      ? withDeckCounts(publicDeck as PublicDeck)
+      : null
+    : auth.isAuthenticated
+      ? deck ?? null
+      : localDeck;
 
   return {
     hydrated:
       !auth.isLoading &&
       (!deckId ||
-        (auth.isAuthenticated
-          ? deck !== undefined
-          : offlineSnapshot !== null)),
+        (isTemporaryPublicDeck
+          ? publicDeck !== undefined
+          : auth.isAuthenticated
+            ? deck !== undefined
+            : offlineSnapshot !== null)),
     isAuthenticated: auth.isAuthenticated || localDecksActive,
     isSignedIn: auth.isAuthenticated,
-    deck: auth.isAuthenticated ? deck ?? null : localDeck,
+    deck: resolvedDeck,
   };
 }
 
@@ -1475,6 +1522,82 @@ function entriesWouldExceedLimit(
   }
 
   return false;
+}
+
+function dedupeEntriesByCardId(entries: DeckEntry[]): DeckEntry[] {
+  const seen = new Set<string>();
+  const deduped: DeckEntry[] = [];
+  for (const entry of entries) {
+    if (seen.has(entry.cardId)) continue;
+    seen.add(entry.cardId);
+    deduped.push(entry);
+  }
+  return deduped;
+}
+
+function identifierForEntry(entry: DeckEntry): CollectionIdentifier {
+  if (entry.cardId.startsWith("oracle:")) {
+    return { oracle_id: entry.cardId.slice("oracle:".length) };
+  }
+  if (entry.set && entry.collectorNumber) {
+    return { set: entry.set, collector_number: entry.collectorNumber };
+  }
+  return { id: entry.cardId };
+}
+
+function buildEntryCardMap(
+  entries: DeckEntry[],
+  cards: ScryfallCard[]
+): Map<string, ScryfallCard> {
+  const cardsById = new Map<string, ScryfallCard>();
+  const cardsBySetCollector = new Map<string, ScryfallCard>();
+  const cardsByName = new Map<string, ScryfallCard>();
+
+  for (const card of cards) {
+    cardsById.set(card.id, card);
+    if (card.oracle_id) cardsById.set(`oracle:${card.oracle_id}`, card);
+    if (card.set && card.collector_number) {
+      cardsBySetCollector.set(
+        setCollectorKey(card.set, card.collector_number),
+        card
+      );
+    }
+    cardsByName.set(card.name.toLowerCase(), card);
+  }
+
+  const byEntryId = new Map<string, ScryfallCard>();
+  for (const entry of entries) {
+    const card =
+      cardsById.get(entry.cardId) ??
+      (entry.set && entry.collectorNumber
+        ? cardsBySetCollector.get(setCollectorKey(entry.set, entry.collectorNumber))
+        : undefined) ??
+      cardsByName.get(entry.name.toLowerCase());
+    if (card) byEntryId.set(entry.cardId, card);
+  }
+  return byEntryId;
+}
+
+async function completeEntryCardMap(
+  entries: DeckEntry[],
+  cards: ScryfallCard[],
+  loadCards: (identifiers: CollectionIdentifier[]) => Promise<ScryfallCard[]>
+): Promise<Map<string, ScryfallCard>> {
+  const cardsByEntryId = buildEntryCardMap(entries, cards);
+  const unresolved = entries.filter((entry) => !cardsByEntryId.has(entry.cardId));
+  if (unresolved.length === 0) return cardsByEntryId;
+
+  const cardsByName = await loadCards(unresolved.map(nameIdentifierForEntry));
+  return buildEntryCardMap(entries, [...cards, ...cardsByName]);
+}
+
+function nameIdentifierForEntry(entry: DeckEntry): CollectionIdentifier {
+  if (entry.set) return { name: entry.name, set: entry.set };
+  return { name: entry.name };
+}
+
+function setCollectorKey(set: string, collectorNumber: string): string {
+  return `${set.toLowerCase()}:${collectorNumber}`;
 }
 
 function normalizeEntries(

@@ -11,6 +11,7 @@ import {
   usePlaytest,
 } from "../lib/playtest";
 import { PlayCardView } from "../components/playtest/PlayCardView";
+import { MagePlaytest } from "../components/playtest/MagePlaytest";
 import {
   MulliganBottomModal,
   ScryModal,
@@ -99,6 +100,7 @@ function PlayPageContent() {
 function PlayDeckContent() {
   const searchParams = useSearchParams();
   const deckId = searchParams.get("deck") ?? "";
+  const gameId = searchParams.get("gameId") ?? "";
   const { deck, hydrated, isSignedIn } = useDeck(deckId || null);
 
   if (!hydrated) {
@@ -154,7 +156,15 @@ function PlayDeckContent() {
     );
   }
 
-  return <Playtest deck={deck} returnHref={builderDeckHref(deck.id)} />;
+  const returnHref = builderDeckHref(deck.id);
+  return (
+    <MagePlaytest
+      deck={deck}
+      initialGameId={gameId}
+      returnHref={returnHref}
+      manualFallback={<Playtest deck={deck} returnHref={returnHref} />}
+    />
+  );
 }
 
 export default function PlayPage() {

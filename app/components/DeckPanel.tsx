@@ -1,7 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Deck, DeckEntry, DeckZone } from "../lib/types";
+import {
+  analyzeDeckLegality,
+  type DeckCardLegalityIssue,
+} from "../lib/deckFormats";
 import { ManaCost } from "./ManaCost";
 
 type Props = {
@@ -197,9 +201,6 @@ export function DeckPanel({
   const maybeboardCount = countEntries(maybeboardEntries);
   const hasAnyEntries = mainCount + sideboardCount + maybeboardCount > 0;
 
-  // Track which card IDs we've already tried to hydrate in this session so we
-  // don't spam Scryfall for cards that genuinely have no listed metadata.
-  const triedCardDataRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!onRefreshCardData) return;
     const allEntries = [
@@ -207,17 +208,13 @@ export function DeckPanel({
       ...sideboardEntries,
       ...maybeboardEntries,
     ];
-    const novel = allEntries.some(
+    const missingCardData = allEntries.some(
       (e) =>
-        (e.priceUsd === undefined || e.rarity === undefined) &&
-        !triedCardDataRef.current.has(e.cardId)
+        e.priceUsd === undefined ||
+        e.rarity === undefined ||
+        e.legalities === undefined
     );
-    if (!novel) return;
-    for (const e of allEntries) {
-      if (e.priceUsd === undefined || e.rarity === undefined) {
-        triedCardDataRef.current.add(e.cardId);
-      }
-    }
+    if (!missingCardData) return;
     onRefreshCardData();
   }, [mainEntries, sideboardEntries, maybeboardEntries, onRefreshCardData]);
 
@@ -277,6 +274,7 @@ export function DeckPanel({
       pricedCount,
     };
   }, [mainEntries, sideboardEntries, maybeboardEntries, sortMode]);
+  const deckLegality = useMemo(() => analyzeDeckLegality(deck), [deck]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -337,6 +335,7 @@ export function DeckPanel({
                 groups={mainGroups}
                 view={view}
                 readOnly={readOnly}
+                cardIssuesById={deckLegality.cardIssuesById}
                 previewCardId={previewCardId}
                 onSetQty={onSetQty}
                 onSetCommander={onSetCommander}
@@ -352,6 +351,7 @@ export function DeckPanel({
                 groups={sideboardGroups}
                 view={view}
                 readOnly={readOnly}
+                cardIssuesById={deckLegality.cardIssuesById}
                 previewCardId={previewCardId}
                 onSetQty={onSetSideboardQty}
                 onSetCommander={onSetCommander}
@@ -367,6 +367,7 @@ export function DeckPanel({
                 groups={maybeboardGroups}
                 view={view}
                 readOnly={readOnly}
+                cardIssuesById={deckLegality.cardIssuesById}
                 previewCardId={previewCardId}
                 onSetQty={onSetMaybeboardQty}
                 onSetCommander={onSetCommander}
@@ -388,6 +389,7 @@ function DeckBoardSection({
   groups,
   view,
   readOnly,
+  cardIssuesById,
   previewCardId,
   onSetQty,
   onSetCommander,
@@ -400,6 +402,7 @@ function DeckBoardSection({
   groups: Array<readonly [string, DeckEntry[]]>;
   view: ViewMode;
   readOnly: boolean;
+  cardIssuesById: Map<string, DeckCardLegalityIssue[]>;
   previewCardId: string | null;
   onSetQty: (cardId: string, qty: number) => void;
   onSetCommander: (cardId: string, isCommander: boolean) => void;
@@ -453,6 +456,7 @@ function DeckBoardSection({
                     entry={entry}
                     boardView={boardView}
                     readOnly={readOnly}
+                    legalityIssues={cardIssuesById.get(entry.cardId) ?? []}
                     highlighted={previewCardId === entry.cardId}
                     onSetQty={(quantity) => onSetQty(entry.cardId, quantity)}
                     onSetCommander={(isCommander) =>
@@ -472,6 +476,7 @@ function DeckBoardSection({
                     entry={entry}
                     boardView={boardView}
                     readOnly={readOnly}
+                    legalityIssues={cardIssuesById.get(entry.cardId) ?? []}
                     highlighted={previewCardId === entry.cardId}
                     onSetQty={(quantity) => onSetQty(entry.cardId, quantity)}
                     onSetCommander={(isCommander) =>
@@ -557,6 +562,7 @@ function DeckTile({
   entry,
   boardView,
   readOnly,
+  legalityIssues,
   highlighted,
   onSetQty,
   onSetCommander,
@@ -567,6 +573,7 @@ function DeckTile({
   entry: DeckEntry;
   boardView: BoardView;
   readOnly: boolean;
+  legalityIssues: DeckCardLegalityIssue[];
   highlighted?: boolean;
   onSetQty: (q: number) => void;
   onSetCommander: (isCommander: boolean) => void;
@@ -578,6 +585,13 @@ function DeckTile({
   const trashTop = entry.isCommander && isMain ? "top-9" : "top-1.5";
   const moveTop =
     entry.isCommander && isMain ? "top-[4.65rem]" : "top-9";
+  const cardIssues = legalityIssues.filter(
+    (issue) => issue.kind === "card-legality"
+  );
+  const copyIssues = legalityIssues.filter(
+    (issue) => issue.kind === "copy-limit"
+  );
+  const issueTitle = issueTitleText(legalityIssues);
 
   return (
     <li
@@ -642,9 +656,25 @@ function DeckTile({
         )}
 
         {/* quantity badge overlay */}
-        <div className="pointer-events-none absolute right-1.5 top-1.5 flex h-7 min-w-7 items-center justify-center rounded-full bg-black/80 px-2 text-sm font-semibold text-white tabular-nums shadow">
+        <div
+          title={copyIssues.length > 0 ? issueTitle : undefined}
+          className={`pointer-events-none absolute right-1.5 top-1.5 flex h-7 min-w-7 items-center justify-center gap-1 rounded-full px-2 text-sm font-semibold text-white tabular-nums shadow ${
+            copyIssues.length > 0 ? "bg-red-700" : "bg-black/80"
+          }`}
+        >
           ×{entry.quantity}
+          {copyIssues.length > 0 && <WarningIcon size={12} />}
         </div>
+
+        {cardIssues.length > 0 && (
+          <div
+            title={issueTitle}
+            aria-label={issueTitle}
+            className="absolute right-1.5 top-10 flex h-6 w-6 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-800 shadow"
+          >
+            <WarningIcon size={13} />
+          </div>
+        )}
 
         {!readOnly && (
           <div
@@ -722,6 +752,7 @@ function DeckRow({
   entry,
   boardView,
   readOnly,
+  legalityIssues,
   highlighted,
   onSetQty,
   onSetCommander,
@@ -732,6 +763,7 @@ function DeckRow({
   entry: DeckEntry;
   boardView: BoardView;
   readOnly: boolean;
+  legalityIssues: DeckCardLegalityIssue[];
   highlighted?: boolean;
   onSetQty: (q: number) => void;
   onSetCommander: (isCommander: boolean) => void;
@@ -740,6 +772,13 @@ function DeckRow({
   onSelect: () => void;
 }) {
   const isMain = boardView === "main";
+  const cardIssues = legalityIssues.filter(
+    (issue) => issue.kind === "card-legality"
+  );
+  const copyIssues = legalityIssues.filter(
+    (issue) => issue.kind === "copy-limit"
+  );
+  const issueTitle = issueTitleText(legalityIssues);
 
   return (
     <li
@@ -778,6 +817,15 @@ function DeckRow({
               Commander
             </span>
           )}
+          {cardIssues.length > 0 && (
+            <span
+              title={issueTitle}
+              aria-label={issueTitle}
+              className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-amber-200 bg-amber-50 text-amber-800"
+            >
+              <WarningIcon size={12} />
+            </span>
+          )}
         </div>
         <div className="truncate text-xs text-text-muted">
           {entry.typeLine ?? ""}
@@ -786,8 +834,14 @@ function DeckRow({
           <ManaCost cost={entry.manaCost} size={16} />
         </div>
       </div>
-      <div className="shrink-0 rounded-full bg-black/80 px-2 py-0.5 text-xs font-semibold tabular-nums text-white">
+      <div
+        title={copyIssues.length > 0 ? issueTitle : undefined}
+        className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums text-white ${
+          copyIssues.length > 0 ? "bg-red-700" : "bg-black/80"
+        }`}
+      >
         ×{entry.quantity}
+        {copyIssues.length > 0 && <WarningIcon size={11} />}
       </div>
       {!readOnly && (
       <div className="hidden shrink-0 items-center gap-1 transition lg:flex lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
@@ -929,6 +983,10 @@ function MoveMenu({
   );
 }
 
+function issueTitleText(issues: DeckCardLegalityIssue[]): string {
+  return issues.map((issue) => issue.message).join("\n");
+}
+
 function formatUsd(n: number): string {
   return `$${n.toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -1053,6 +1111,26 @@ function ManaCurve({ curve }: { curve: number[] }) {
         />
       ))}
     </div>
+  );
+}
+
+function WarningIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M10 3 2.8 16.5h14.4L10 3Z" />
+      <path d="M10 7.8v4.1" />
+      <path d="M10 14.7h.01" />
+    </svg>
   );
 }
 

@@ -44,6 +44,7 @@ function frontFaceName(name: string): string {
 }
 
 function zoneForSection(section: string | null): DeckZone {
+  if (section === "companion") return "sideboard";
   if (section === "maybeboard") return "maybeboard";
   return section === "sideboard" ? "sideboard" : "main";
 }

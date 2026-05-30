@@ -1,0 +1,32 @@
+services:
+  mage-wrapper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mtg-mage-gateway:wrapper-test
+    ports:
+      - "17888:17888"
+    cpus: 2.0
+    mem_limit: 4g
+    memswap_limit: 4g
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    environment:
+      MAGE_SERVER_URL: "http://beta.xmage.today:17171/"
+      MAGE_GATEWAY_JAVA_OPTS: "-Xms2g -Xmx2g -Xss512k -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ExitOnOutOfMemoryError -Djava.net.preferIPv4Stack=true"
+      MAGE_GATEWAY_MAX_SESSIONS: "1000"
+      MAGE_GATEWAY_HTTP_THREADS: "64"
+      MAGE_GATEWAY_HTTP_QUEUE: "512"
+      MAGE_GATEWAY_SESSION_THREADS: "64"
+      MAGE_GATEWAY_SESSION_QUEUE: "256"
+      MAGE_GATEWAY_WEBSOCKET_THREADS: "1200"
+      MAGE_GATEWAY_WEBSOCKET_QUEUE: "0"
+      MAGE_GATEWAY_EVENT_BACKLOG: "32"
+      MAGE_GATEWAY_SESSION_TTL_MINUTES: "360"
+      MAGE_GATEWAY_COMPLETED_TTL_MINUTES: "10"
+      MAGE_GATEWAY_WAITING_TTL_MINUTES: "15"
+      MAGE_GATEWAY_IDLE_TTL_MINUTES: "30"
+      MAGE_GATEWAY_MAX_REQUEST_BODY_BYTES: "1048576"
+      MAGE_GATEWAY_BACKEND_STATS_INTERVAL_SECONDS: "15"

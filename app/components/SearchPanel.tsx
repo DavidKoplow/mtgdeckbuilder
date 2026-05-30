@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import type { ScryfallCard } from "../lib/types";
 import { getHybridCandidateOracleIds } from "../lib/cardFilterIndex";
 import { oracleIdForCard } from "../lib/cardIdentity";
+import { DECK_FORMAT_OPTIONS, normalizeDeckFormat } from "../lib/deckFormats";
 import {
   type AdvancedFilters,
   buildQuery,
@@ -26,6 +27,7 @@ type Props = {
   ) => void;
   /** Scryfall card id — row is highlighted when it matches the preview pane */
   previewCardId?: string | null;
+  defaultFormat?: string;
   semanticRules: boolean;
   onSemanticRulesChange: (enabled: boolean) => void;
   canUseSemanticSearch: boolean;
@@ -55,6 +57,14 @@ const MAX_EXACT_VECTOR_CANDIDATE_IDS = 1024;
 export const MAX_SIMILARITY_SEEDS = 8;
 const EMPTY_RESULTS: ScryfallCard[] = [];
 
+function defaultSearchFilters(defaultFormat: string | undefined): AdvancedFilters {
+  return {
+    sort: "name",
+    colorMode: "identity",
+    format: defaultFormat,
+  };
+}
+
 function dedupeCards(cards: ScryfallCard[]): ScryfallCard[] {
   const byIdentity = new Map<string, ScryfallCard>();
 
@@ -80,6 +90,7 @@ export function SearchPanel({
   onAdd,
   onHover,
   previewCardId = null,
+  defaultFormat,
   semanticRules,
   onSemanticRulesChange,
   canUseSemanticSearch,
@@ -92,10 +103,12 @@ export function SearchPanel({
   tourSelectFirstResultKey = 0,
   onTourSelectResult,
 }: Props) {
-  const [filters, setFilters] = useState<AdvancedFilters>({
-    sort: "name",
-    colorMode: "identity",
-  });
+  const normalizedDefaultFormat = defaultFormat
+    ? normalizeDeckFormat(defaultFormat)
+    : undefined;
+  const [filters, setFilters] = useState<AdvancedFilters>(() =>
+    defaultSearchFilters(normalizedDefaultFormat)
+  );
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [results, setResults] = useState<ScryfallCard[]>([]);
   const [resultsKey, setResultsKey] = useState("");
@@ -122,8 +135,21 @@ export function SearchPanel({
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<number | null>(null);
   const runRef = useRef(0);
+  const lastDefaultFormatRef = useRef(normalizedDefaultFormat);
   const lastTourSearchKeyRef = useRef(0);
   const lastTourSelectKeyRef = useRef(0);
+
+  useEffect(() => {
+    const previousDefault = lastDefaultFormatRef.current;
+    lastDefaultFormatRef.current = normalizedDefaultFormat;
+    setFilters((current) => {
+      if (current.format === normalizedDefaultFormat) return current;
+      if (current.format !== undefined && current.format !== previousDefault) {
+        return current;
+      }
+      return { ...current, format: normalizedDefaultFormat };
+    });
+  }, [normalizedDefaultFormat]);
 
   useEffect(() => {
     if (!tourSearchName || tourSearchKey === lastTourSearchKeyRef.current) {
@@ -133,12 +159,16 @@ export function SearchPanel({
     lastTourSearchKeyRef.current = tourSearchKey;
     onSemanticRulesChange(false);
     setFilters({
-      sort: "name",
-      colorMode: "identity",
+      ...defaultSearchFilters(normalizedDefaultFormat),
       name: tourSearchName,
     });
     setFiltersExpanded(true);
-  }, [onSemanticRulesChange, tourSearchKey, tourSearchName]);
+  }, [
+    normalizedDefaultFormat,
+    onSemanticRulesChange,
+    tourSearchKey,
+    tourSearchName,
+  ]);
 
   useEffect(() => {
     if (
@@ -360,11 +390,15 @@ export function SearchPanel({
 
   function clearAll() {
     onSemanticRulesChange(false);
-    setFilters({ sort: "name", colorMode: "identity" });
+    setFilters(defaultSearchFilters(normalizedDefaultFormat));
     setFiltersExpanded(false);
   }
 
-  const activeFilterCount = countActiveFilters(filters, semanticEnabled);
+  const activeFilterCount = countActiveFilters(
+    filters,
+    semanticEnabled,
+    normalizedDefaultFormat
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -645,13 +679,11 @@ export function SearchPanel({
                 className="input"
               >
                 <option value="">Any</option>
-                <option value="standard">Standard</option>
-                <option value="pioneer">Pioneer</option>
-                <option value="modern">Modern</option>
-                <option value="legacy">Legacy</option>
-                <option value="vintage">Vintage</option>
-                <option value="commander">Commander</option>
-                <option value="pauper">Pauper</option>
+                {DECK_FORMAT_OPTIONS.map((format) => (
+                  <option key={format.id} value={format.id}>
+                    {format.label}
+                  </option>
+                ))}
               </select>
             </Field>
 
@@ -950,7 +982,8 @@ function Field({
 
 function countActiveFilters(
   filters: AdvancedFilters,
-  semanticRules: boolean
+  semanticRules: boolean,
+  defaultFormat: string | undefined
 ): number {
   let count = 0;
   if (filters.name?.trim()) count += 1;
@@ -963,7 +996,7 @@ function countActiveFilters(
   if (filters.cmcMin !== undefined || filters.cmcMax !== undefined) count += 1;
   if (filters.power?.trim() || filters.toughness?.trim()) count += 1;
   if (filters.usdMin !== undefined || filters.usdMax !== undefined) count += 1;
-  if (filters.format) count += 1;
+  if (filters.format && filters.format !== defaultFormat) count += 1;
   if (filters.sort && filters.sort !== "name") count += 1;
   if (semanticRules) count += 1;
   return count;

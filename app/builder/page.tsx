@@ -30,10 +30,17 @@ import {
 } from "../components/layout/MobileWorkspaceTabs";
 import { ResponsivePane } from "../components/layout/ResponsivePane";
 import { useFinePointer, useIsWorkspaceDesktop } from "../hooks/useMediaQuery";
-import type { ScryfallCard } from "../lib/types";
+import type { Deck, ScryfallCard } from "../lib/types";
 import { oracleIdForCard } from "../lib/cardIdentity";
 import { getCardById } from "../lib/scryfall";
 import { getOfflineCardById, resolveLinesOffline, useOfflineMode } from "../lib/offline";
+import {
+  DECK_FORMAT_OPTIONS,
+  analyzeDeckLegality,
+  deckFormatLabel,
+  normalizeDeckFormat,
+  type DeckLegalitySummary,
+} from "../lib/deckFormats";
 import {
   PLAYTEST_MOBILE_WARNING,
   PLAYTEST_MOBILE_WARNING_QUERY_PARAM,
@@ -146,16 +153,17 @@ export default function Home() {
 
   const missingTemporaryDeckRef = useRef<string | null>(null);
   useEffect(() => {
+    const temporaryDeckKey = temporaryPublicDeckId ?? null;
     if (
-      !temporaryPublicDeckId ||
+      !temporaryDeckKey ||
       !decks.hydrated ||
       !decks.temporaryDeckNotFound ||
-      missingTemporaryDeckRef.current === temporaryPublicDeckId
+      missingTemporaryDeckRef.current === temporaryDeckKey
     ) {
       return;
     }
-    missingTemporaryDeckRef.current = temporaryPublicDeckId;
-    decks.showNotice("That public deck is no longer available.");
+    missingTemporaryDeckRef.current = temporaryDeckKey;
+    decks.showNotice("That deck is no longer available.");
   }, [decks, temporaryPublicDeckId]);
 
   const handledOwnedPublicDeckRef = useRef<string | null>(null);
@@ -521,19 +529,15 @@ export default function Home() {
     : similaritySeedDisabled
       ? "Remove a selected card before adding another"
       : undefined;
-  const selectedDeckEntries =
+  const selectedMainDeckEntries =
     selected && active
-      ? [
-          ...active.entries,
-          ...(active.sideboard ?? []),
-          ...(active.maybeboard ?? []),
-        ].filter((entry) => entry.cardId === selected.id)
+      ? active.entries.filter((entry) => entry.cardId === selected.id)
       : [];
-  const selectedDeckQuantity = selectedDeckEntries.reduce(
+  const selectedDeckQuantity = selectedMainDeckEntries.reduce(
     (total, entry) => total + entry.quantity,
     0
   );
-  const selectedIsCommander = selectedDeckEntries.some(
+  const selectedIsCommander = selectedMainDeckEntries.some(
     (entry) => entry.isCommander === true
   );
 
@@ -560,10 +564,15 @@ export default function Home() {
             menuContent={
               <div className="mobile-header-deck-summary flex min-w-0 flex-col gap-2">
                 {active ? (
-                  <div className="mobile-menu-deck-row flex min-w-0 items-center gap-2">
+                  <div className="mobile-menu-deck-row flex min-w-0 flex-wrap items-center gap-2">
                     {activeIsTemporary ? (
                       <>
                         <TemporaryDeckName name={active.name} />
+                        <DeckFormatSelector
+                          deck={active}
+                          readOnly
+                          onChange={(format) => decks.setFormat(active.id, format)}
+                        />
                         <TemporaryDeckBadge />
                       </>
                     ) : (
@@ -576,6 +585,10 @@ export default function Home() {
                           onRenameBlocked={() =>
                             showAccountRequired("name and save this deck")
                           }
+                        />
+                        <DeckFormatSelector
+                          deck={active}
+                          onChange={(format) => decks.setFormat(active.id, format)}
                         />
                         <PublicDeckButton
                           isPublic={active.isPublic}
@@ -645,7 +658,7 @@ export default function Home() {
                     />
                   </div>
                 )}
-                {active && !activeIsTemporary && active.entries.length > 0 && (
+                {active && active.entries.length > 0 && (
                   <Link
                     href={`/play/?deck=${encodeURIComponent(active.id)}`}
                     onClick={handlePlaytestClick}
@@ -711,6 +724,11 @@ export default function Home() {
                     {activeIsTemporary ? (
                       <>
                         <TemporaryDeckName name={active.name} />
+                        <DeckFormatSelector
+                          deck={active}
+                          readOnly
+                          onChange={(format) => decks.setFormat(active.id, format)}
+                        />
                         <TemporaryDeckBadge />
                       </>
                     ) : (
@@ -723,6 +741,10 @@ export default function Home() {
                           onRenameBlocked={() =>
                             showAccountRequired("name and save this deck")
                           }
+                        />
+                        <DeckFormatSelector
+                          deck={active}
+                          onChange={(format) => decks.setFormat(active.id, format)}
                         />
                         <PublicDeckButton
                           isPublic={active.isPublic}
@@ -790,7 +812,7 @@ export default function Home() {
                   }
                 />
               )}
-              {active && !activeIsTemporary && active.entries.length > 0 && (
+              {active && active.entries.length > 0 && (
                 <Link
                   href={`/play/?deck=${encodeURIComponent(active.id)}`}
                   onClick={handlePlaytestClick}
@@ -936,6 +958,7 @@ export default function Home() {
             <div className="min-h-0 flex-1">
               <SearchPanel
                 previewCardId={selected?.id ?? null}
+                defaultFormat={active?.format}
                 semanticRules={semanticRules}
                 onSemanticRulesChange={handleSemanticRulesChange}
                 canUseSemanticSearch={canUseSemanticSearch}
@@ -1001,6 +1024,7 @@ export default function Home() {
         >
           <SearchPanel
             previewCardId={selected?.id ?? null}
+            defaultFormat={active?.format}
             semanticRules={semanticRules}
             onSemanticRulesChange={handleSemanticRulesChange}
             canUseSemanticSearch={canUseSemanticSearch}
@@ -1112,6 +1136,98 @@ export default function Home() {
         onStepChange={handleTourStepChange}
       />
     </div>
+  );
+}
+
+function DeckFormatSelector({
+  deck,
+  readOnly = false,
+  onChange,
+}: {
+  deck: Deck;
+  readOnly?: boolean;
+  onChange: (format: string) => void;
+}) {
+  const selectedFormat = normalizeDeckFormat(deck.format);
+  const legality = analyzeDeckLegality(deck);
+
+  return (
+    <div className="flex min-w-0 shrink-0 items-center gap-1.5">
+      <select
+        value={selectedFormat}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={readOnly}
+        aria-label={`Deck format for ${deck.name}`}
+        title={deckFormatLabel(selectedFormat)}
+        className="control h-9 min-w-[8.7rem] px-2 text-xs font-semibold capitalize disabled:opacity-70"
+      >
+        {DECK_FORMAT_OPTIONS.map((format) => (
+          <option key={format.id} value={format.id}>
+            {format.label}
+          </option>
+        ))}
+      </select>
+      <DeckLegalityBadge summary={legality} />
+    </div>
+  );
+}
+
+function DeckLegalityBadge({ summary }: { summary: DeckLegalitySummary }) {
+  const label =
+    summary.state === "legal"
+      ? "Legal"
+      : summary.state === "unknown"
+        ? "Checking"
+        : "Not legal";
+  const tooltipMessages =
+    summary.messages.length > 0
+      ? summary.messages
+      : [
+          summary.state === "unknown"
+            ? `Waiting for legality data for ${summary.missingLegalityCount} card${
+                summary.missingLegalityCount === 1 ? "" : "s"
+              }.`
+            : `Deck is legal in ${summary.label}.`,
+        ];
+  const classes =
+    summary.state === "legal"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : summary.state === "unknown"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : "border-red-200 bg-red-50 text-red-800";
+
+  return (
+    <span className="group relative inline-flex shrink-0">
+      <span
+        tabIndex={0}
+        aria-label={`${summary.label} deck status: ${label}`}
+        className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-semibold outline-none focus:ring-2 focus:ring-accent/20 ${classes}`}
+      >
+        <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+        {label}
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-full z-50 mt-1 hidden w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-border bg-white p-3 text-left text-xs leading-5 text-text shadow-xl group-hover:block group-focus-within:block"
+      >
+        <span className="mb-1 block text-[10px] font-semibold uppercase text-text-subtle">
+          {summary.label} legality
+        </span>
+        <span className="block space-y-1">
+          {tooltipMessages.slice(0, 6).map((message) => (
+            <span key={message} className="block">
+              {message}
+            </span>
+          ))}
+          {tooltipMessages.length > 6 && (
+            <span className="block text-text-subtle">
+              {tooltipMessages.length - 6} more issue
+              {tooltipMessages.length - 6 === 1 ? "" : "s"}
+            </span>
+          )}
+        </span>
+      </span>
+    </span>
   );
 }
 

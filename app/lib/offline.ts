@@ -1517,6 +1517,7 @@ function cardToEntrySnapshot(card: ScryfallCard, quantity: number): DeckEntry {
     set: card.set,
     collectorNumber: card.collector_number,
     priceUsd: Number.isFinite(priceUsd) ? priceUsd : undefined,
+    legalities: card.legalities,
   };
 }
 
