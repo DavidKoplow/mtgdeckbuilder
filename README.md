@@ -111,8 +111,8 @@ Configure these Cloud Build substitutions or keep the defaults in
 - `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_CLIENT_ID`,
   `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, and optional `NEXT_PUBLIC_BASE_PATH`.
 - `_REGION`, `_SERVICE_NAME`, and `_REPOSITORY`. The config defaults Cloud Run
-  memory to `1536Mi`; override `_CLOUD_RUN_MEMORY` only if you intentionally
-  change the JVM heap budget.
+  memory to `2Gi`; override `_CLOUD_RUN_MEMORY` only if you intentionally change
+  the JVM heap budget.
 
 The Cloud Build service account needs permission to push to Artifact Registry
 and deploy the Cloud Run service.

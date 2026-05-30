@@ -8,7 +8,7 @@ substitutions:
   _REGION: us-east4
   _REPOSITORY: cloud-run-source-deploy
   _SERVICE_NAME: mtg-decks
-  _CLOUD_RUN_MEMORY: 1536Mi
+  _CLOUD_RUN_MEMORY: 2Gi
   _CLOUD_RUN_CPU: "2"
   _CLOUD_RUN_TIMEOUT: "3600"
   _MAGE_LOCAL_AI_SERVER: "true"
