@@ -14,9 +14,9 @@ RUN set -eu; \
     (while true; do echo "MAGE build is still running; Mage.Sets compiles about 32k card source files."; sleep 30; done) & \
     heartbeat_pid="$!"; \
     trap 'kill "$heartbeat_pid" >/dev/null 2>&1 || true' EXIT; \
-    mvn -pl Mage.WebGateway,Mage.Server,Mage.Sets -am -DskipTests install; \
-    mvn -pl Mage.Server -DskipTests assembly:single; \
-    mvn -pl Mage.WebGateway,Mage.Sets -DskipTests org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=runtime -DoutputDirectory=/out/lib; \
+    mvn -T 1C -pl Mage.WebGateway,Mage.Server,Mage.Sets -am -Dmaven.test.skip=true install; \
+    mvn -pl Mage.Server -Dmaven.test.skip=true assembly:single; \
+    mvn -pl Mage.WebGateway,Mage.Sets -Dmaven.test.skip=true org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=runtime -DoutputDirectory=/out/lib; \
     kill "$heartbeat_pid" >/dev/null 2>&1 || true; \
     trap - EXIT; \
     cp Mage/target/mage.jar Mage.Common/target/mage-common.jar Mage.Sets/target/mage-sets.jar /out/lib/; \
