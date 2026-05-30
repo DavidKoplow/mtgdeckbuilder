@@ -94,16 +94,28 @@ The Cloud Run workflow starts the bundled local MAGE server by default for AI
 play (`MAGE_LOCAL_AI_SERVER=true`); human games can still select the public
 MAGE servers through the gateway.
 
-For push deploys, configure these GitHub repository variables/secrets:
+For push deploys, use a Google Cloud Build GitHub trigger pointed at
+`cloudbuild.yaml`. Configure the trigger as:
+
+- Event: push to `main`
+- Configuration: Cloud Build configuration file
+- Location: `/cloudbuild.yaml`
+
+The Cloud Build config requests `E2_HIGHCPU_8`, builds and pushes the gateway
+image, then deploys it to Cloud Run.
+
+Configure these Cloud Build substitutions or keep the defaults in
+`cloudbuild.yaml`:
 
 - `NEXT_PUBLIC_MAGE_GATEWAY_URL`: HTTPS URL of the Cloud Run service.
 - `NEXT_PUBLIC_CONVEX_URL`, `NEXT_PUBLIC_WORKOS_CLIENT_ID`,
   `NEXT_PUBLIC_WORKOS_REDIRECT_URI`, and optional `NEXT_PUBLIC_BASE_PATH`.
-- `GCP_PROJECT_ID`, `GCP_REGION`, `CLOUD_RUN_SERVICE`, and
-  `ARTIFACT_REGISTRY_REPOSITORY`. The workflow defaults Cloud Run memory to
-  `1536Mi`; override `CLOUD_RUN_MEMORY` only if you intentionally change the JVM
-  heap budget.
-- Secrets `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`.
+- `_REGION`, `_SERVICE`, and `_REPOSITORY`. The config defaults Cloud Run memory
+  to `1536Mi`; override `_CLOUD_RUN_MEMORY` only if you intentionally change the
+  JVM heap budget.
+
+The Cloud Build service account needs permission to push to Artifact Registry
+and deploy the Cloud Run service.
 
 3. Configure WorkOS AuthKit in `.env.local`:
 
