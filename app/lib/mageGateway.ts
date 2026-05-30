@@ -258,6 +258,7 @@ export function mageGatewayHealthUrl(server?: Pick<MageServerOption, "host" | "p
   const baseUrl = mageGatewayBaseUrl();
   if (!server) return `${baseUrl}/health`;
   const url = new URL(`${baseUrl}/health`);
+  url.searchParams.set("backendStats", "1");
   url.searchParams.set("mageHost", server.host);
   url.searchParams.set("magePort", String(server.port));
   return url.toString();

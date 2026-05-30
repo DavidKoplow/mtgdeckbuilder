@@ -11,6 +11,8 @@ substitutions:
   _CLOUD_RUN_MEMORY: 4Gi
   _CLOUD_RUN_CPU: "2"
   _CLOUD_RUN_TIMEOUT: "3600"
+  _CLOUD_RUN_MIN_INSTANCES: "1"
+  _CLOUD_RUN_MAX_INSTANCES: "1"
   _MAGE_LOCAL_AI_SERVER: "true"
   _MAGE_SERVER_HOST: beta.xmage.today
   _MAGE_SERVER_PORT: "17171"
@@ -52,6 +54,11 @@ steps:
       - ${_CLOUD_RUN_CPU}
       - --timeout
       - ${_CLOUD_RUN_TIMEOUT}
+      - --min-instances
+      - ${_CLOUD_RUN_MIN_INSTANCES}
+      - --max-instances
+      - ${_CLOUD_RUN_MAX_INSTANCES}
+      - --session-affinity
       - --set-env-vars
       - MAGE_GATEWAY_HOST=0.0.0.0,MAGE_LOCAL_AI_SERVER=${_MAGE_LOCAL_AI_SERVER},MAGE_SERVER_HOST=${_MAGE_SERVER_HOST},MAGE_SERVER_PORT=${_MAGE_SERVER_PORT}
 

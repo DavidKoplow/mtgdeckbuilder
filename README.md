@@ -102,7 +102,9 @@ For push deploys, use a Google Cloud Build GitHub trigger pointed at
 - Location: `/cloudbuild.yaml`
 
 The Cloud Build config requests `E2_HIGHCPU_8`, builds and pushes the gateway
-image, then deploys it to Cloud Run.
+image, then deploys it to Cloud Run. The deployed service is pinned to one warm
+instance with session affinity because the embedded MAGE server and web gateway
+store active game sessions in process memory.
 
 Configure these Cloud Build substitutions or keep the defaults in
 `cloudbuild.yaml`:
@@ -113,6 +115,9 @@ Configure these Cloud Build substitutions or keep the defaults in
 - `_REGION`, `_SERVICE_NAME`, and `_REPOSITORY`. The config defaults Cloud Run
   memory to `4Gi`; override `_CLOUD_RUN_MEMORY` only if you intentionally change
   the JVM heap budget.
+- `_CLOUD_RUN_MIN_INSTANCES` and `_CLOUD_RUN_MAX_INSTANCES` default to `1` so a
+  game WebSocket does not reconnect to a different instance with no in-memory
+  MAGE session.
 
 The Cloud Build service account needs permission to push to Artifact Registry
 and deploy the Cloud Run service.

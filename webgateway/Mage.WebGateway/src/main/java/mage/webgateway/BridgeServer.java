@@ -80,9 +80,12 @@ final class BridgeServer {
             if ("GET".equals(request.method) && "/health".equals(request.path)) {
                 String mageHost = queryValue(request.query, "mageHost");
                 int magePort = parseInt(queryValue(request.query, "magePort"), -1);
+                boolean includeBackendStats = hasQueryFlag(request.query, "backendStats")
+                        || mageHost != null
+                        || magePort > 0;
                 Map<String, Object> payload = new HashMap<>();
                 payload.put("ok", Boolean.TRUE);
-                payload.putAll(manager.healthPayload(mageHost, magePort));
+                payload.putAll(manager.healthPayload(mageHost, magePort, includeBackendStats));
                 writeJson(output, 200, payload);
                 socket.close();
                 return;

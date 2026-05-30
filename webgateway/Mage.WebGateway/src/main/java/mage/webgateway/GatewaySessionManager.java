@@ -154,14 +154,20 @@ final class GatewaySessionManager {
     }
 
     Map<String, Object> healthPayload(String mageHost, int magePort) {
+        return healthPayload(mageHost, magePort, true);
+    }
+
+    Map<String, Object> healthPayload(String mageHost, int magePort, boolean includeBackendStats) {
         String targetHost = valueOrDefault(mageHost, defaultMageHost);
         int targetPort = magePort > 0 ? magePort : defaultMagePort;
         Map<String, Object> payload = new HashMap<>();
-        Map<String, Object> backend = backendStatsService(targetHost, targetPort).snapshot().toPayload();
-        backend.put("mageHost", targetHost);
-        backend.put("magePort", targetPort);
         payload.put("sessions", sessionStatsPayload());
-        payload.put("backend", backend);
+        if (includeBackendStats) {
+            Map<String, Object> backend = backendStatsService(targetHost, targetPort).snapshot().toPayload();
+            backend.put("mageHost", targetHost);
+            backend.put("magePort", targetPort);
+            payload.put("backend", backend);
+        }
         return payload;
     }
 
