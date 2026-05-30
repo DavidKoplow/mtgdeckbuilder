@@ -4,7 +4,6 @@ options:
   machineType: "E2_HIGHCPU_8"
 
 substitutions:
-  _IMAGE_TAG: manual
   _REGION: us-east4
   _REPOSITORY: cloud-run-source-deploy
   _SERVICE: mtg-mage-gateway
@@ -23,13 +22,13 @@ steps:
       - -f
       - Dockerfile
       - -t
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${_IMAGE_TAG}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
       - .
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${_IMAGE_TAG}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
@@ -38,7 +37,7 @@ steps:
       - deploy
       - ${_SERVICE}
       - --image
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${_IMAGE_TAG}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
       - --region
       - ${_REGION}
       - --platform
@@ -56,4 +55,4 @@ steps:
       - MAGE_GATEWAY_HOST=0.0.0.0,MAGE_LOCAL_AI_SERVER=${_MAGE_LOCAL_AI_SERVER},MAGE_SERVER_HOST=${_MAGE_SERVER_HOST},MAGE_SERVER_PORT=${_MAGE_SERVER_PORT}
 
 images:
-  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${_IMAGE_TAG}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
