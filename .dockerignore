@@ -1,0 +1,16 @@
+.git
+.github
+.next
+.vercel
+node_modules
+out
+data
+build
+coverage
+*.log
+.env
+.env.*
+!.env*.example
+__pycache__
+*.pyc
+mage
