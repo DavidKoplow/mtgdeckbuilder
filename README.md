@@ -77,10 +77,12 @@ NEXT_PUBLIC_MAGE_GATEWAY_URL=https://your-mage-gateway.example.com
 `NEXT_PUBLIC_MAGE_GATEWAY_URL` should point at the MAGE web gateway wrapper. For
 local development this is usually `http://127.0.0.1:17888`; for GitHub Pages it
 must be the HTTPS Cloud Run service URL. The root `Dockerfile` is the Cloud Run
-entrypoint. It uses `mage/` as an untouched upstream clone, copies the custom
-gateway from `webgateway/Mage.WebGateway` only inside the Docker build stage,
-and starts with `docker/mage-entrypoint.sh`. The container listens on the Cloud
-Run `PORT` when present and otherwise falls back to `17888`.
+entrypoint. It leaves the local `mage/` checkout as an untouched upstream clone;
+Cloud Build clones `https://github.com/magefree/mage.git` at the pinned
+`MAGE_REF`, copies the custom gateway from `webgateway/Mage.WebGateway` only
+inside the Docker build stage, and starts with `docker/mage-entrypoint.sh`. The
+container listens on the Cloud Run `PORT` when present and otherwise falls back
+to `17888`.
 
 The gateway does not use permanent storage. AI play keeps the live MAGE session
 in container memory, while browser commands include the latest client-side game

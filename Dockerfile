@@ -1,7 +1,11 @@
 FROM maven:3.9.9-eclipse-temurin-8 AS build
 
+ARG MAGE_REPO=https://github.com/magefree/mage.git
+ARG MAGE_REF=56121238fc475d54ed4ca6ece5e5dc636c6f7df2
+
 WORKDIR /src
-COPY mage/ .
+RUN git clone --filter=blob:none "${MAGE_REPO}" . \
+    && git checkout "${MAGE_REF}"
 COPY webgateway/Mage.WebGateway ./Mage.WebGateway
 
 RUN mkdir -p /out/lib /out/gateway /out/server \
