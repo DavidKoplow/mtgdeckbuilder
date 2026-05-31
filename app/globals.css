@@ -371,6 +371,41 @@ a {
   animation: playtest-end-pop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.mage-playtest-shell {
+  background:
+    linear-gradient(180deg, rgba(236, 243, 237, 0.95), rgba(247, 248, 251, 0.96) 46%, rgba(242, 245, 242, 0.96)),
+    var(--bg);
+}
+
+.mage-playtest-header {
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 82%, #b8c7b8);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 245, 0.94)),
+    #f3f7f3;
+  box-shadow: 0 6px 18px rgba(39, 58, 48, 0.08);
+}
+
+.mage-playtest-board {
+  background:
+    linear-gradient(180deg, rgba(229, 237, 230, 0.68), rgba(245, 247, 244, 0.72)),
+    #edf3ee;
+}
+
+.mage-playtest-panel {
+  border: 1px solid color-mix(in oklab, var(--border) 78%, #b5c7b4);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 251, 247, 0.92)),
+    var(--surface);
+  box-shadow: 0 10px 26px rgba(35, 49, 42, 0.08);
+}
+
+.mage-card-rail,
+.mage-land-strip {
+  background:
+    linear-gradient(180deg, rgba(242, 247, 242, 0.96), rgba(235, 242, 236, 0.94)),
+    var(--surface-raised);
+}
+
 @keyframes menu-overlay-fade {
   from {
     opacity: 0;

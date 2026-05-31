@@ -17,7 +17,7 @@ import { api } from "../../../convex/_generated/api";
 import { AppIcon } from "../AppIcon";
 import { CardHover } from "../CardHover";
 import { ManaCost, ManaPip, ManaText, ManaTextBlock } from "../ManaCost";
-import { useFinePointer } from "../../hooks/useMediaQuery";
+import { useFinePointer, useMediaQuery } from "../../hooks/useMediaQuery";
 import { getCardByName, getCardImage } from "../../lib/scryfall";
 import {
   fetchMageSessionEvents,
@@ -119,8 +119,6 @@ type MageCommand = {
   type: string;
   gameId?: string;
   playerId?: string;
-  clientGameView?: MageGameView | null;
-  clientPrompt?: MageGatewayEvent | null;
   id?: string;
   value?: string | number | boolean;
   chatId?: string;
@@ -156,7 +154,6 @@ type UseMagePlaytest = MageSessionState & {
   addManaToPool: (mana: ManaPoolDelta) => void;
   playerAction: (action: string, data?: string | number | boolean | null) => void;
   passPriority: () => void;
-  passUntilNextTurn: () => void;
   concede: () => void;
   sendChatMessage: (message: string) => boolean;
 };
@@ -190,7 +187,33 @@ const EVENT_LOG_LIMIT = 160;
 const CHAT_LOG_LIMIT = 120;
 const CARD_WIDTH = 76;
 const HAND_CARD_WIDTH = 116;
+const MAGE_CARD_TINY_QUERY = "(max-width: 1080px), (max-height: 680px)";
+const MAGE_CARD_TIGHT_QUERY = "(max-width: 1220px), (max-height: 760px)";
+const MAGE_CARD_COMPACT_QUERY = "(max-width: 1440px), (max-height: 860px)";
+const MAGE_CARD_ROOMY_QUERY = "(min-width: 1720px) and (min-height: 960px)";
 const MY_HAND_VIEW_KEY = "__my_hand__";
+
+type MageCardSizes = {
+  battlefield: number;
+  battlefieldCompact: number;
+  lands: number;
+  landsCompact: number;
+  hand: number;
+  command: number;
+  stack: number;
+  exile: number;
+};
+
+const DEFAULT_MAGE_CARD_SIZES: MageCardSizes = {
+  battlefield: CARD_WIDTH,
+  battlefieldCompact: 66,
+  lands: 68,
+  landsCompact: 58,
+  hand: HAND_CARD_WIDTH,
+  command: 52,
+  stack: 72,
+  exile: 58,
+};
 
 type VisibleHandView = {
   key: string;
@@ -200,7 +223,6 @@ type VisibleHandView = {
   isOwnHand: boolean;
 };
 const MAGE_CARD_DRAG_TYPE = "application/x-mage-card";
-const PASS_UNTIL_NEXT_TURN_ACTION = "PASS_PRIORITY_UNTIL_NEXT_TURN_SKIP_STACK";
 
 type MageCardDragPayload = {
   id: string;
@@ -661,14 +683,13 @@ export function MagePlaytest({
   const session = useMagePlaytest(deck, initialGameId);
   const convex = useConvex();
   const opponentDecksResult = useQuery(api.decks.listDecksFull, {});
-  const [showManualFallback, setShowManualFallback] = useState(false);
+  const showManualFallback = false;
   const [setupOpen, setSetupOpen] = useState(true);
   const [setupOpenedByUser, setSetupOpenedByUser] = useState(false);
   const [lastConfig, setLastConfig] = useState<MagePlaytestConfig | null>(null);
   const [gatewayHealth, setGatewayHealth] = useState<GatewayHealth>("checking");
   const [gatewayStats, setGatewayStats] = useState<GatewayStats | null>(null);
   const [eventLogOpen, setEventLogOpen] = useState(false);
-  const [confirmPassTurnKey, setConfirmPassTurnKey] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover>(null);
   const [toast, setToast] = useState<PlaytestToastState | null>(null);
   const [inspectCard, setInspectCard] = useState<MageCardView | null>(null);
@@ -690,6 +711,7 @@ export function MagePlaytest({
   const cardElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const [combatTick, setCombatTick] = useState(0);
   const finePointer = useFinePointer();
+  const cardSizes = useMageCardSizes();
   const opponentDecksLoaded = opponentDecksResult !== undefined;
   const opponentDecks = useMemo(
     () =>
@@ -751,9 +773,12 @@ export function MagePlaytest({
       MY_HAND_VIEW_KEY);
   const activeHand =
     visibleHands.find((hand) => hand.key === effectiveHandViewKey) ?? visibleHands[0];
+  const payingMana =
+    session.prompt?.callbackMethod === "GAME_PLAY_MANA" ||
+    session.prompt?.callbackMethod === "GAME_PLAY_XMANA";
   const interactiveIds = useMemo(
-    () => collectInteractiveIds(session.prompt, game),
-    [session.prompt, game]
+    () => collectInteractiveIds(session.prompt, game, self),
+    [session.prompt, game, self]
   );
   const promptChoiceZones = useMemo(
     () => collectPromptChoiceZones(session.prompt, game),
@@ -773,9 +798,6 @@ export function MagePlaytest({
     [selectablePlayers]
   );
   const playableIds = useMemo(() => collectPlayableIds(game), [game]);
-  const payingMana =
-    session.prompt?.callbackMethod === "GAME_PLAY_MANA" ||
-    session.prompt?.callbackMethod === "GAME_PLAY_XMANA";
   const manaPaymentTotal = useManaPaymentTotal(session.prompt);
   const canChooseCards = isCardChoicePrompt(session.prompt);
   const stackCards = cardsFromView(game?.stack);
@@ -799,14 +821,6 @@ export function MagePlaytest({
   );
   const canAct = session.status === "connected" && !session.spectator;
   const selfManaPool = manaPoolFromView(self?.manaPool);
-  const passWouldEndTurn = canAct && isSelfActivePlayer(self, game);
-  const activeTurnKey = game
-    ? `${game.turn ?? "unknown"}:${game.activePlayerId ?? game.activePlayerName ?? "unknown"}`
-    : "";
-  const confirmPassOpen =
-    confirmPassTurnKey !== null &&
-    passWouldEndTurn &&
-    confirmPassTurnKey === activeTurnKey;
   const combatGroups = useMemo(() => combatGroupsFromView(game), [game]);
   const combatRoles = useMemo(
     () => collectCombatRoles(game, session.prompt),
@@ -934,11 +948,11 @@ export function MagePlaytest({
   const chooseSelfBattlefieldCard = useCallback(
     (card: MageCardView) => {
       const chosen = chooseCard(card);
-      if (!chosen || payingMana) return;
+      if (!chosen) return;
       const mana = manaProducedByActivation(card, session.prompt);
       if (mana) session.addManaToPool(mana);
     },
-    [chooseCard, payingMana, session]
+    [chooseCard, session]
   );
 
   const spendMana = useCallback(
@@ -1180,15 +1194,6 @@ export function MagePlaytest({
   }, [eventLogOpen]);
 
   useEffect(() => {
-    if (!confirmPassOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setConfirmPassTurnKey(null);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmPassOpen]);
-
-  useEffect(() => {
     if (!toast) return;
     const timeout = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timeout);
@@ -1335,65 +1340,49 @@ export function MagePlaytest({
     setSetupOpen(true);
   }, [effectiveLastConfig, startWithConfig]);
 
-  const requestPassUntilNextTurn = useCallback(() => {
-    if (passWouldEndTurn) {
-      setConfirmPassTurnKey(activeTurnKey);
-      return;
-    }
-    session.passUntilNextTurn();
-  }, [activeTurnKey, passWouldEndTurn, session]);
-
-  const confirmPassUntilNextTurn = useCallback(() => {
-    setConfirmPassTurnKey(null);
-    session.passUntilNextTurn();
-  }, [session]);
-
   if (showManualFallback && manualFallback) {
     return <>{manualFallback}</>;
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
+    <div className="mage-playtest-shell flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
       <header
-        className="soft-divider shrink-0 bg-surface-raised px-3 py-2"
-        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
+        className="mage-playtest-header shrink-0 px-2 py-1.5"
+        style={{ paddingTop: "max(0.375rem, env(safe-area-inset-top))" }}
       >
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <Link
               href={returnHref}
-              className="control flex items-center gap-2 px-3 py-2 text-sm"
+              className="control flex h-8 shrink-0 items-center gap-1.5 px-2 text-xs"
             >
-              <AppIcon size={20} className="rounded-md" />
+              <AppIcon size={18} className="rounded-md" />
               Builder
             </Link>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">{deck.name}</div>
-              <div className="truncate text-xs text-text-subtle">
-                MAGE gateway {mageGatewayBaseUrl()}
+
+            <div className="flex min-w-0 shrink-0 items-center gap-2">
+              <div className="min-w-0 max-w-[15rem] truncate text-sm font-semibold">
+                {deck.name}
               </div>
+              <GatewayHealthPill
+                health={gatewayHealth}
+                stats={gatewayStats}
+                showPopulation={session.config?.opponentType === "human"}
+                compact
+              />
+              <StatusPill status={session.status} error={session.error} />
+              {session.spectator && (
+                <span className="shrink-0 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-text-muted">
+                  spectator
+                </span>
+              )}
             </div>
-            <GatewayHealthPill
-              health={gatewayHealth}
-              stats={gatewayStats}
-              showPopulation={session.config?.opponentType === "human"}
-            />
-            <StatusPill status={session.status} error={session.error} />
-            {session.spectator && (
-              <span className="shrink-0 rounded-full border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-text-muted">
-                spectator
-              </span>
-            )}
+
+            <GameStat label="Turn" value={formatTurn(game)} />
+            <PhaseTrack game={game} self={self} className="shrink-0" />
           </div>
 
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-            <GameStat label="Turn" value={formatTurn(game)} />
-            <PhaseStepStat game={game} />
-            <TurnOwnerPill self={self} game={game} />
-            <GameStat label="Active" value={game?.activePlayerName || "—"} />
-            <GameStat label="Priority" value={game?.priorityPlayerName || "—"} />
-            <GameStat label="You ELO" value={formatPlayerRating(self)} />
-            <GameStat label="Opp ELO" value={formatPlayerRating(opponent)} />
+          <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">
             <ManaPoolStat
               pool={selfManaPool}
               payingMana={payingMana}
@@ -1401,26 +1390,24 @@ export function MagePlaytest({
               onSpend={spendMana}
               onBlocked={notify}
             />
-          </div>
-        </div>
-
-        <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <ActionButton
-              disabled={!canAct}
-              disabledReason={
-                session.spectator
-                  ? "Spectators cannot pass priority."
-                  : "Connect to MAGE before passing priority."
-              }
-              onBlocked={notify}
-              onClick={requestPassUntilNextTurn}
-            >
-              Pass
-            </ActionButton>
-            {PRIORITY_ACTIONS.map((item) => (
-              <ActionButton
-                key={item.action}
+            <div className="h-6 w-px shrink-0 bg-border" />
+            <div className="flex shrink-0 items-center gap-1.5">
+              {PRIORITY_ACTIONS.map((item) => (
+                <ActionButton
+                  key={item.action}
+                  disabled={!canAct}
+                  disabledReason={
+                    session.spectator
+                      ? "Spectators cannot use game actions."
+                      : "Connect to MAGE before using game actions."
+                  }
+                  onBlocked={notify}
+                  onClick={() => session.playerAction(item.action)}
+                >
+                  {item.label}
+                </ActionButton>
+              ))}
+              <SkipActionsMenu
                 disabled={!canAct}
                 disabledReason={
                   session.spectator
@@ -1428,84 +1415,56 @@ export function MagePlaytest({
                     : "Connect to MAGE before using game actions."
                 }
                 onBlocked={notify}
-                onClick={() => session.playerAction(item.action)}
+                onAction={(action) => session.playerAction(action)}
+              />
+            </div>
+            <div className="h-6 w-px shrink-0 bg-border" />
+            <div className="flex shrink-0 items-center gap-1.5">
+              <ActionButton
+                disabled={session.status === "starting" || session.status === "connecting"}
+                disabledReason="MAGE is already starting."
+                onBlocked={notify}
+                onClick={restart}
               >
-                {item.label}
+                {session.sessionId ? "Restart" : "Start"}
               </ActionButton>
-            ))}
-            <SkipActionsMenu
-              disabled={!canAct}
-              disabledReason={
-                session.spectator
-                  ? "Spectators cannot use game actions."
-                  : "Connect to MAGE before using game actions."
-              }
-              onBlocked={notify}
-              onAction={(action) => session.playerAction(action)}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <ActionButton
-              disabled={session.status === "starting" || session.status === "connecting"}
-              disabledReason="MAGE is already starting."
-              onBlocked={notify}
-              onClick={restart}
-            >
-              {session.sessionId ? "Restart" : "Start"}
-            </ActionButton>
-            <ActionButton
-              disabled={session.status === "starting" || session.status === "connecting"}
-              disabledReason="Wait for MAGE to finish starting before changing setup."
-              onBlocked={notify}
-              onClick={() => {
-                setSetupOpenedByUser(true);
-                setSetupOpen(true);
-              }}
-            >
-              Setup
-            </ActionButton>
-            <ActionButton
-              danger
-              disabled={!canAct}
-              disabledReason={
-                session.spectator
-                  ? "Spectators cannot concede."
-                  : "Connect to MAGE before conceding."
-              }
-              onBlocked={notify}
-              onClick={session.concede}
-            >
-              Concede
-            </ActionButton>
-            <ActionButton
-              disabled={session.status !== "connected"}
-              disabledReason="There is no connected MAGE session to disconnect."
-              onBlocked={notify}
-              onClick={session.disconnect}
-            >
-              Disconnect
-            </ActionButton>
-            {manualFallback && (
-              <ActionButton onClick={() => setShowManualFallback(true)}>
-                Manual Table
+              <ActionButton
+                danger
+                disabled={!canAct}
+                disabledReason={
+                  session.spectator
+                    ? "Spectators cannot concede."
+                    : "Connect to MAGE before conceding."
+                }
+                onBlocked={notify}
+                onClick={session.concede}
+              >
+                Concede
               </ActionButton>
-            )}
+              <ActionButton
+                disabled={session.status !== "connected"}
+                disabledReason="There is no connected MAGE session to disconnect."
+                onBlocked={notify}
+                onClick={session.disconnect}
+              >
+                Disconnect
+              </ActionButton>
+            </div>
           </div>
         </div>
-
-        <PhaseTrack game={game} self={self} />
       </header>
 
       <BoardContext value={boardContext}>
         <main
           ref={boardRef}
-          className="relative grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(17rem,20rem)] grid-rows-[minmax(0,1fr)_12.5rem] gap-2 overflow-hidden p-2"
+          className="mage-playtest-board relative grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(15rem,18rem)] grid-rows-[minmax(0,1fr)_clamp(11.75rem,22vh,17.25rem)] gap-1.5 overflow-hidden p-1.5"
         >
-          <section className="grid min-h-0 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-2 overflow-hidden">
+          <section className="grid min-h-0 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-1.5 overflow-hidden">
             <PlayerZone
               label="Opponent"
               player={opponent}
               compact
+              cardSizes={cardSizes}
               combatRoles={combatRoles}
               playableIds={playableIds}
               imageFor={imageFor}
@@ -1525,6 +1484,7 @@ export function MagePlaytest({
             <PlayerZone
               label="You"
               player={self}
+              cardSizes={cardSizes}
               combatRoles={combatRoles}
               playableIds={playableIds}
               acceptsHandDrops
@@ -1553,10 +1513,11 @@ export function MagePlaytest({
             />
           </section>
 
-          <aside className="workspace-panel row-span-2 flex min-h-0 flex-col gap-2 overflow-hidden rounded-lg bg-surface p-2">
+          <aside className="mage-playtest-panel row-span-2 flex min-h-0 flex-col gap-1.5 overflow-hidden rounded-lg p-1.5">
             <PromptPanel
               session={session}
               game={game}
+              self={self}
               imageFor={imageFor}
               manaPool={selfManaPool}
               manaPaymentTotal={manaPaymentTotal}
@@ -1569,7 +1530,7 @@ export function MagePlaytest({
               onChoosePlayer={choosePlayer}
               onChooseCard={chooseCard}
               onBlocked={notify}
-              onPassUntilNextTurn={requestPassUntilNextTurn}
+              onPassPriority={session.passPriority}
             />
             <div className="thin-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-auto pr-0.5">
               <BigCardPanel card={inspectCard} imageFor={imageFor} />
@@ -1592,6 +1553,7 @@ export function MagePlaytest({
                 onCardActivate={chooseCard}
                 onBlocked={notifyBlockedCard}
                 onHover={onHover}
+                cardWidth={cardSizes.stack}
               />
               <ExileZone
                 cards={exileCards}
@@ -1605,6 +1567,7 @@ export function MagePlaytest({
                 onCardActivate={chooseCard}
                 onBlocked={notifyBlockedCard}
                 onHover={onHover}
+                cardWidth={cardSizes.exile}
               />
               <SharedZonesPanel game={game} onOpenZone={setZoneViewer} />
               <GameChatPanel
@@ -1638,6 +1601,7 @@ export function MagePlaytest({
             onCardActivate={chooseCard}
             onBlocked={notifyBlockedCard}
             onHover={onHover}
+            cardWidth={cardSizes.hand}
           />
 
           <CombatArrowsOverlay
@@ -1684,12 +1648,6 @@ export function MagePlaytest({
 
       <PlaytestToastOverlay toast={toast} onClose={() => setToast(null)} />
 
-      <ConfirmPassTurnDialog
-        open={confirmPassOpen}
-        onCancel={() => setConfirmPassTurnKey(null)}
-        onConfirm={confirmPassUntilNextTurn}
-      />
-
       <CardHover
         src={hover?.src}
         x={hover?.x ?? 0}
@@ -1725,6 +1683,69 @@ export function MagePlaytest({
       )}
     </div>
   );
+}
+
+function useMageCardSizes(): MageCardSizes {
+  const tiny = useMediaQuery(MAGE_CARD_TINY_QUERY);
+  const tight = useMediaQuery(MAGE_CARD_TIGHT_QUERY);
+  const compact = useMediaQuery(MAGE_CARD_COMPACT_QUERY);
+  const roomy = useMediaQuery(MAGE_CARD_ROOMY_QUERY);
+
+  return useMemo(() => {
+    if (tiny) {
+      return {
+        battlefield: 58,
+        battlefieldCompact: 50,
+        lands: 50,
+        landsCompact: 44,
+        hand: 84,
+        command: 40,
+        stack: 50,
+        exile: 44,
+      };
+    }
+
+    if (tight) {
+      return {
+        battlefield: 64,
+        battlefieldCompact: 56,
+        lands: 56,
+        landsCompact: 50,
+        hand: 94,
+        command: 44,
+        stack: 58,
+        exile: 50,
+      };
+    }
+
+    if (compact) {
+      return {
+        battlefield: 70,
+        battlefieldCompact: 60,
+        lands: 60,
+        landsCompact: 52,
+        hand: 104,
+        command: 48,
+        stack: 64,
+        exile: 52,
+      };
+    }
+
+    if (roomy) {
+      return {
+        battlefield: 80,
+        battlefieldCompact: 68,
+        lands: 72,
+        landsCompact: 62,
+        hand: 124,
+        command: 56,
+        stack: 76,
+        exile: 62,
+      };
+    }
+
+    return DEFAULT_MAGE_CARD_SIZES;
+  }, [compact, roomy, tight, tiny]);
 }
 
 type ValidationState =
@@ -3005,8 +3026,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
   const gameIdRef = useRef<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
   const spectatorRef = useRef(false);
-  const clientGameViewRef = useRef<MageGameView | null>(null);
-  const clientPromptRef = useRef<MageGatewayEvent | null>(null);
 
   const closeSocket = useCallback(() => {
     const socket = socketRef.current;
@@ -3100,12 +3119,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
           const event = JSON.parse(message.data as string) as MageGatewayEvent;
           if (event.gameId) gameIdRef.current = event.gameId;
           if (event.playerId) playerIdRef.current = event.playerId;
-          if (event.gameView) clientGameViewRef.current = event.gameView;
-          if (event.type === "prompt" || event.type === "gameOver") {
-            clientPromptRef.current = event;
-          } else if (event.type === "state") {
-            clientPromptRef.current = null;
-          }
           if (event.type === "gameOver" && !spectator) {
             clearStoredMageSession(deck.id);
             writeUrlGameId(null);
@@ -3152,8 +3165,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
     abortRef.current = abort;
     gameIdRef.current = null;
     playerIdRef.current = null;
-    clientGameViewRef.current = null;
-    clientPromptRef.current = null;
     setState({
       ...initialSessionState,
       status: "starting",
@@ -3210,8 +3221,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
     closeSocket();
     gameIdRef.current = null;
     playerIdRef.current = null;
-    clientGameViewRef.current = null;
-    clientPromptRef.current = null;
     setState({
       ...initialSessionState,
       status: "connecting",
@@ -3249,9 +3258,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
         playerIdRef.current,
         mana
       );
-      if (gameView !== current.gameView) {
-        clientGameViewRef.current = gameView;
-      }
       return gameView === current.gameView ? current : { ...current, gameView };
     });
   }, []);
@@ -3276,8 +3282,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
       JSON.stringify({
         gameId: gameIdRef.current ?? undefined,
         playerId: playerIdRef.current ?? undefined,
-        clientGameView: clientGameViewRef.current,
-        clientPrompt: clientPromptRef.current,
         ...command,
       })
     );
@@ -3321,10 +3325,6 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
     ),
     passPriority: useCallback(
       () => sendCommand({ type: "chooseBoolean", value: false }),
-      [sendCommand]
-    ),
-    passUntilNextTurn: useCallback(
-      () => sendCommand({ type: "playerAction", action: PASS_UNTIL_NEXT_TURN_ACTION }),
       [sendCommand]
     ),
     concede: useCallback(() => sendCommand({ type: "concede" }), [sendCommand]),
@@ -3565,10 +3565,12 @@ function GatewayHealthPill({
   health,
   stats,
   showPopulation = true,
+  compact = false,
 }: {
   health: GatewayHealth;
   stats: GatewayStats | null;
   showPopulation?: boolean;
+  compact?: boolean;
 }) {
   const backendError =
     stats?.backend?.ok === false &&
@@ -3589,7 +3591,7 @@ function GatewayHealthPill({
       ? stats.backend.onlineUsers
       : null;
   const waiting = totalWaitingCount(stats);
-  const label =
+  const fullLabel =
     health === "online"
       ? showPopulation
         ? backendError
@@ -3605,6 +3607,15 @@ function GatewayHealthPill({
       : health === "offline"
         ? "gateway offline"
         : "checking gateway";
+  const label = compact
+    ? health === "online"
+      ? backendError
+        ? "gateway issue"
+        : "gateway"
+      : health === "offline"
+        ? "offline"
+        : "checking"
+    : fullLabel;
   const titleParts = showPopulation
     ? [
         backendError
@@ -3621,7 +3632,9 @@ function GatewayHealthPill({
     : ["MAGE gateway status."];
   return (
     <span
-      className={`max-w-72 shrink-0 truncate rounded-full border px-2.5 py-1 text-[11px] font-semibold ${style}`}
+      className={`shrink-0 truncate rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+        compact ? "max-w-32" : "max-w-72"
+      } ${style}`}
       title={titleParts.join(" ")}
     >
       {label}
@@ -3631,44 +3644,11 @@ function GatewayHealthPill({
 
 function GameStat({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex min-h-8 items-center gap-1.5 rounded-lg border border-border bg-white px-2 text-xs">
+    <div className="flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-white px-2 text-xs">
       <span className="text-text-subtle">{label}</span>
       <span className="max-w-32 truncate font-semibold text-text">{value}</span>
     </div>
   );
-}
-
-function PhaseStepStat({ game }: { game: MageGameView | null }) {
-  const style = phaseStepStyleForGame(game);
-  const value = formatStep(game);
-  return (
-    <div
-      className={`flex min-h-8 items-center gap-1.5 rounded-lg border px-2 text-xs ${style.statBorder} ${style.statBg}`}
-    >
-      <span className={style.textMuted}>Step</span>
-      <span className={`max-w-36 truncate font-semibold ${style.text}`}>{value}</span>
-    </div>
-  );
-}
-
-function formatPlayerRating(player?: MagePlayerView): string {
-  const rating = playerRatingValue(player);
-  return rating === null ? "—" : rating.toLocaleString();
-}
-
-function playerRatingValue(player?: MagePlayerView): number | null {
-  const userData = player?.userData;
-  const candidates = [
-    userData?.constructedRating,
-    userData?.generalRating,
-    userData?.limitedRating,
-  ];
-  for (const rating of candidates) {
-    if (typeof rating === "number" && Number.isFinite(rating) && rating > 0) {
-      return Math.round(rating);
-    }
-  }
-  return null;
 }
 
 function ManaPoolStat({
@@ -3755,9 +3735,11 @@ function ManaPoolStat({
 function TurnOwnerPill({
   self,
   game,
+  compact = false,
 }: {
   self?: MagePlayerView;
   game?: MageGameView | null;
+  compact?: boolean;
 }) {
   const yours = isSelfActivePlayer(self, game ?? null);
   const ready = !!game?.activePlayerName || !!game?.activePlayerId;
@@ -3770,7 +3752,9 @@ function TurnOwnerPill({
 
   return (
     <span
-      className={`flex min-h-8 items-center rounded-lg border px-2 text-xs font-semibold ${style}`}
+      className={`flex items-center rounded-lg border font-semibold ${
+        compact ? "min-h-7 px-2 text-[11px]" : "min-h-8 px-2 text-xs"
+      } ${style}`}
     >
       {label}
     </span>
@@ -3912,52 +3896,11 @@ function EventLogPopup({
   );
 }
 
-function ConfirmPassTurnDialog({
-  open,
-  onCancel,
-  onConfirm,
-}: {
-  open: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
-      <button
-        type="button"
-        aria-label="Cancel passing the turn"
-        className="absolute inset-0 cursor-default"
-        onClick={onCancel}
-      />
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-pass-turn-title"
-        className="relative z-10 w-full max-w-sm rounded-xl border border-border bg-surface p-4 shadow-2xl"
-      >
-        <h2 id="confirm-pass-turn-title" className="text-base font-semibold">
-          Pass the rest of your turn?
-        </h2>
-        <p className="mt-2 text-sm text-text-muted">
-          You will pass priority until the next turn starts.
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <ActionButton onClick={onCancel}>Cancel</ActionButton>
-          <button type="button" className="control-primary" onClick={onConfirm}>
-            Pass Turn
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function PlayerZone({
   label,
   player,
   compact,
+  cardSizes,
   combatRoles,
   playableIds,
   acceptsHandDrops,
@@ -3978,6 +3921,7 @@ function PlayerZone({
   label: string;
   player?: MagePlayerView;
   compact?: boolean;
+  cardSizes: MageCardSizes;
   combatRoles?: CombatRoles;
   playableIds?: Set<string>;
   acceptsHandDrops?: boolean;
@@ -4017,7 +3961,7 @@ function PlayerZone({
   ) => onOpenZone({ title: `${name} — ${title}`, cards });
 
   return (
-    <section className="workspace-panel flex min-h-0 flex-col gap-2 overflow-hidden rounded-lg bg-surface p-2">
+    <section className="mage-playtest-panel flex min-h-0 flex-col gap-1.5 overflow-hidden rounded-lg p-1.5">
       <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0">
           {playerSelectable && player?.playerId && onPlayerSelect ? (
@@ -4082,13 +4026,14 @@ function PlayerZone({
           onCardActivate={onCardActivate}
           onBlocked={onBlocked}
           onHover={onHover}
+          cardWidth={cardSizes.command}
         />
       )}
 
       <MageDropZone
         enabled={acceptsHandDrops && !spectator}
         onDropCard={onPlayCardFromHand}
-        className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(4.75rem,auto)] gap-2 overflow-hidden"
+        className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-1.5 overflow-hidden"
       >
         <CardRail
           cards={nonlands}
@@ -4106,11 +4051,13 @@ function PlayerZone({
           onCardActivate={onCardActivate}
           onBlocked={onBlocked}
           onHover={onHover}
-          cardWidth={compact ? 66 : CARD_WIDTH}
+          cardWidth={
+            compact ? cardSizes.battlefieldCompact : cardSizes.battlefield
+          }
           className="h-full"
         />
 
-        <div className="min-h-0 rounded-lg bg-surface-raised p-2 ring-1 ring-border/70">
+        <div className="mage-land-strip min-h-0 rounded-lg p-1.5 ring-1 ring-border/70">
           <ZoneHeader label="Lands" count={lands.length} />
           <CardRail
             cards={lands}
@@ -4128,8 +4075,8 @@ function PlayerZone({
             onCardActivate={onCardActivate}
             onBlocked={onBlocked}
             onHover={onHover}
-            cardWidth={compact ? 62 : 68}
-            className="mt-1 max-h-[7.5rem] min-h-[4.75rem]"
+            cardWidth={compact ? cardSizes.landsCompact : cardSizes.lands}
+            className="mt-1 h-[6.7rem] min-h-[4.5rem]"
           />
         </div>
       </MageDropZone>
@@ -4195,21 +4142,12 @@ function PlayerStatusBar({
     typeof player?.wins === "number" && typeof player?.winsNeeded === "number"
       ? `${player.wins}/${player.winsNeeded}`
       : null;
-  const rating = playerRatingValue(player);
 
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-text-subtle">
+    <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-text-subtle">
       <span className="rounded-full border border-border bg-white px-1.5 py-0.5 font-semibold text-text">
         ♥ {player?.life ?? "—"}
       </span>
-      {rating !== null && (
-        <span
-          className="rounded-full border border-border bg-white px-1.5 py-0.5 font-semibold text-text"
-          title="MAGE constructed rating"
-        >
-          ELO {rating.toLocaleString()}
-        </span>
-      )}
       <span>Hand {player?.handCount ?? "—"}</span>
       <span>Library {player?.libraryCount ?? "—"}</span>
       <ZoneChip label="Grave" count={graveyard.length} onClick={() => onOpenZone("Graveyard", graveyard)} />
@@ -4342,6 +4280,7 @@ function PlayerPassBadge({ player }: { player?: MagePlayerView }) {
 
 function CommandZoneRail({
   commanders,
+  cardWidth,
   imageFor,
   interactiveIds,
   playableIds,
@@ -4355,6 +4294,7 @@ function CommandZoneRail({
   onHover,
 }: {
   commanders: MageCardView[];
+  cardWidth: number;
   imageFor: (card: MageCardView) => string | undefined;
   interactiveIds: Set<string>;
   playableIds?: Set<string>;
@@ -4386,7 +4326,7 @@ function CommandZoneRail({
           onCardActivate={onCardActivate}
           onBlocked={onBlocked}
           onHover={onHover}
-          cardWidth={52}
+          cardWidth={cardWidth}
           wrap={false}
           className="max-h-[5rem] bg-transparent p-0"
         />
@@ -4397,6 +4337,7 @@ function CommandZoneRail({
 
 function StackZone({
   cards,
+  cardWidth,
   imageFor,
   interactiveIds,
   playableIds,
@@ -4409,6 +4350,7 @@ function StackZone({
   onHover,
 }: {
   cards: MageCardView[];
+  cardWidth: number;
   imageFor: (card: MageCardView) => string | undefined;
   interactiveIds: Set<string>;
   playableIds?: Set<string>;
@@ -4443,7 +4385,7 @@ function StackZone({
           onCardActivate={onCardActivate}
           onBlocked={onBlocked}
           onHover={onHover}
-          cardWidth={72}
+          cardWidth={cardWidth}
           wrap={false}
           className="max-h-[7.25rem]"
         />
@@ -4454,6 +4396,7 @@ function StackZone({
 
 function ExileZone({
   cards,
+  cardWidth,
   imageFor,
   interactiveIds,
   playableIds,
@@ -4466,6 +4409,7 @@ function ExileZone({
   onHover,
 }: {
   cards: ExileCardView[];
+  cardWidth: number;
   imageFor: (card: MageCardView) => string | undefined;
   interactiveIds: Set<string>;
   playableIds?: Set<string>;
@@ -4499,7 +4443,7 @@ function ExileZone({
           onCardActivate={onCardActivate}
           onBlocked={onBlocked}
           onHover={onHover}
-          cardWidth={58}
+          cardWidth={cardWidth}
           wrap={false}
           className="max-h-[6rem]"
         />
@@ -4510,6 +4454,7 @@ function ExileZone({
 
 function HandZone({
   hands,
+  cardWidth,
   activeHandKey,
   onActiveHandChange,
   status,
@@ -4525,6 +4470,7 @@ function HandZone({
   onHover,
 }: {
   hands: VisibleHandView[];
+  cardWidth: number;
   activeHandKey: string;
   onActiveHandChange: (key: string) => void;
   status: Status;
@@ -4546,23 +4492,16 @@ function HandZone({
   const canSwitch = hands.length > 1;
 
   return (
-    <section className="workspace-panel flex min-h-0 flex-col gap-2 overflow-hidden rounded-lg bg-surface p-2">
-      <div className="flex min-w-0 flex-col gap-2">
+    <section className="mage-playtest-panel mage-hand-zone flex min-h-0 flex-col gap-1.5 overflow-hidden rounded-lg p-1.5">
+      <div className="flex min-w-0 items-center gap-2">
         <div className="flex min-w-0 items-baseline justify-between gap-3">
           <ZoneHeader
             label={activeHand?.shortLabel ?? "Hand"}
             count={cards.length}
           />
-          <span className="truncate text-[11px] text-text-subtle">
-            {spectator
-              ? "Watching revealed hands."
-              : isOwnHand
-                ? "Playable cards and valid choices are highlighted."
-                : "Revealed hand — use Switch Hand to return to yours."}
-          </span>
         </div>
         {canSwitch && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="thin-scroll flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
             {hands.map((hand) => {
               const active = hand.key === activeHandKey;
               return (
@@ -4570,7 +4509,7 @@ function HandZone({
                   key={hand.key}
                   type="button"
                   onClick={() => onActiveHandChange(hand.key)}
-                  className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                  className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
                     active
                       ? "border-accent bg-accent-subtle text-accent"
                       : "border-border bg-white text-text-muted hover:border-accent/40 hover:text-text"
@@ -4609,7 +4548,7 @@ function HandZone({
         onCardActivate={onCardActivate}
         onBlocked={onBlocked}
         onHover={onHover}
-        cardWidth={HAND_CARD_WIDTH}
+        cardWidth={cardWidth}
         wrap={false}
         className="h-full"
         draggableFromHand={isOwnHand && !spectator}
@@ -4717,7 +4656,7 @@ function CardRail({
 }) {
   return (
     <div
-      className={`thin-scroll min-h-0 overflow-auto rounded-lg bg-surface-raised p-2 ${className}`}
+      className={`thin-scroll mage-card-rail min-h-0 overflow-auto rounded-lg p-1.5 ${className}`}
     >
       {cards.length > 0 ? (
         <div
@@ -5625,6 +5564,7 @@ function PromptChoiceCards({
 function PromptPanel({
   session,
   game,
+  self,
   imageFor,
   manaPool,
   manaPaymentTotal,
@@ -5637,10 +5577,11 @@ function PromptPanel({
   onChoosePlayer,
   onChooseCard,
   onBlocked,
-  onPassUntilNextTurn,
+  onPassPriority,
 }: {
   session: UseMagePlaytest;
   game: MageGameView | null;
+  self?: MagePlayerView;
   imageFor: (card: MageCardView) => string | undefined;
   manaPool: ManaPoolCounts;
   manaPaymentTotal: string[];
@@ -5653,7 +5594,7 @@ function PromptPanel({
   onChoosePlayer: (playerId: string) => void;
   onChooseCard: (card: MageCardView) => boolean;
   onBlocked: (message: string) => void;
-  onPassUntilNextTurn: () => void;
+  onPassPriority: () => void;
 }) {
   const prompt = session.prompt;
 
@@ -5662,6 +5603,7 @@ function PromptPanel({
       key={promptPanelKey(prompt)}
       session={session}
       game={game}
+      self={self}
       imageFor={imageFor}
       manaPool={manaPool}
       manaPaymentTotal={manaPaymentTotal}
@@ -5674,7 +5616,7 @@ function PromptPanel({
       onChoosePlayer={onChoosePlayer}
       onChooseCard={onChooseCard}
       onBlocked={onBlocked}
-      onPassUntilNextTurn={onPassUntilNextTurn}
+      onPassPriority={onPassPriority}
     />
   );
 }
@@ -5682,6 +5624,7 @@ function PromptPanel({
 function PromptPanelContent({
   session,
   game,
+  self,
   imageFor,
   manaPool,
   manaPaymentTotal,
@@ -5694,10 +5637,11 @@ function PromptPanelContent({
   onChoosePlayer,
   onChooseCard,
   onBlocked,
-  onPassUntilNextTurn,
+  onPassPriority,
 }: {
   session: UseMagePlaytest;
   game: MageGameView | null;
+  self?: MagePlayerView;
   imageFor: (card: MageCardView) => string | undefined;
   manaPool: ManaPoolCounts;
   manaPaymentTotal: string[];
@@ -5710,7 +5654,7 @@ function PromptPanelContent({
   onChoosePlayer: (playerId: string) => void;
   onChooseCard: (card: MageCardView) => boolean;
   onBlocked: (message: string) => void;
-  onPassUntilNextTurn: () => void;
+  onPassPriority: () => void;
 }) {
   const prompt = session.prompt;
   const [amount, setAmount] = useState(() => String(prompt?.min ?? 0));
@@ -5722,6 +5666,9 @@ function PromptPanelContent({
       <section
         className={`mb-3 rounded-xl border p-3 ${phaseStyle.statBorder} ${phaseStyle.statBg}`}
       >
+        <div className="mb-2 flex">
+          <TurnOwnerPill self={self} game={game} compact />
+        </div>
         <div className={`text-[11px] font-semibold uppercase ${phaseStyle.textMuted}`}>
           {formatStep(game)}
         </div>
@@ -5746,7 +5693,7 @@ function PromptPanelContent({
                 : "Connect to MAGE before passing priority."
             }
             onBlocked={onBlocked}
-            onClick={onPassUntilNextTurn}
+            onClick={onPassPriority}
           >
             Pass
           </ActionButton>
@@ -5762,7 +5709,8 @@ function PromptPanelContent({
   const isCardChoice =
     method === "GAME_SELECT" || method === "GAME_TARGET";
   const promptMessage =
-    plainMageText(prompt.message || prompt.choice?.message) || "Choose an action";
+    normalizePromptMessage(plainMageText(prompt.message || prompt.choice?.message)) ||
+    "Choose an action";
   const promptSubMessage = plainMageText(prompt.choice?.subMessage);
   const yesLabel = optionText(prompt.options, "UI.left.btn.text", "Yes");
   const noLabel = optionText(prompt.options, "UI.right.btn.text", "No");
@@ -5775,6 +5723,9 @@ function PromptPanelContent({
           : `${phaseStyle.statBorder} ${phaseStyle.statBg}`
       }`}
     >
+      <div className="mb-2 flex">
+        <TurnOwnerPill self={self} game={game} compact />
+      </div>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div
@@ -5915,7 +5866,7 @@ function PromptPanelContent({
           )}
 
           {(method === "GAME_UPDATE" || method === "GAME_UPDATE_AND_INFORM") && (
-            <ActionButton onClick={onPassUntilNextTurn}>Pass</ActionButton>
+            <ActionButton onClick={onPassPriority}>Pass</ActionButton>
           )}
 
           {prompt.gameView?.special && (
@@ -6143,16 +6094,17 @@ function CompactPhaseStages({
 function PhaseTrack({
   game,
   self,
+  className = "",
 }: {
   game: MageGameView | null;
   self?: MagePlayerView;
+  className?: string;
 }) {
-  const { phase, step } = activeStepKeys(game);
   const myTurn = isSelfActivePlayer(self, game);
   const currentStyle = phaseStepStyleForGame(game);
 
   return (
-    <div className="mt-2 flex min-w-0 items-stretch gap-1 overflow-x-auto">
+    <div className={`flex min-w-0 items-stretch gap-1 overflow-x-auto ${className}`}>
       <span
         className={`flex shrink-0 items-center rounded-md px-2 text-[10px] font-semibold uppercase ${
           myTurn
@@ -6169,7 +6121,6 @@ function PhaseTrack({
       >
         {formatStep(game)}
       </span>
-      <CompactPhaseStages phase={phase} step={step} />
     </div>
   );
 }
@@ -7258,14 +7209,30 @@ function manaProducedByActivation(
   return null;
 }
 
+function isLikelyManaSource(card: MageCardView): boolean {
+  if (card.faceDown) return false;
+  if (BASIC_LAND_MANA[normalizeName(cardName(card))]) return true;
+  return (card.rules ?? []).some((rule) => /\badds?\b/i.test(plainMageText(rule)));
+}
+
 function shouldOptimisticallyAddManaForPrompt(
   prompt: MageGatewayEvent | null
 ): boolean {
   const method = prompt?.callbackMethod ?? prompt?.type;
+  const message = plainMageText(prompt?.message);
   return (
     !method ||
+    (method === "GAME_SELECT" && isPriorityMessage(message)) ||
+    method === "GAME_PLAY_MANA" ||
+    method === "GAME_PLAY_XMANA" ||
     method === "GAME_UPDATE" ||
     method === "GAME_UPDATE_AND_INFORM"
+  );
+}
+
+function isPriorityMessage(message: string): boolean {
+  return /^play (spells and abilities|instants and activated abilities)\.?$/i.test(
+    message
   );
 }
 
@@ -7301,7 +7268,8 @@ function collectPlayableIds(game: MageGameView | null): Set<string> {
 
 function collectInteractiveIds(
   prompt: MageGatewayEvent | null,
-  game: MageGameView | null
+  game: MageGameView | null,
+  self?: MagePlayerView
 ): Set<string> {
   const ids = new Set<string>();
   const method = prompt?.callbackMethod ?? prompt?.type;
@@ -7323,6 +7291,12 @@ function collectInteractiveIds(
   }
   if (isSelectingBlockersPrompt(prompt)) {
     for (const id of collectCombatBlockerIds(game)) ids.add(id);
+  }
+  if (method === "GAME_PLAY_MANA" || method === "GAME_PLAY_XMANA") {
+    for (const card of cardsFromView(self?.battlefield)) {
+      if (!card.id || card.tapped === true || card.rotate === true) continue;
+      if (isLikelyManaSource(card)) ids.add(normalizeUuid(card.id));
+    }
   }
   return ids;
 }
@@ -7768,6 +7742,16 @@ function plainMageText(value?: string | null): string {
     .replace(/\s+\n/g, "\n")
     .replace(/\n\s+/g, "\n")
     .trim();
+}
+
+function normalizePromptMessage(message: string): string {
+  if (/^play spells and abilities\.?$/i.test(message)) {
+    return "You have priority.";
+  }
+  if (/^play instants and activated abilities\.?$/i.test(message)) {
+    return "You have priority.";
+  }
+  return message;
 }
 
 function cardName(card: MageCardView): string {

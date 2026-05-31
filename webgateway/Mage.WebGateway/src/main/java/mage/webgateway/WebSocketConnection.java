@@ -22,7 +22,7 @@ final class WebSocketConnection {
     private static final int MAX_FRAME_PAYLOAD_BYTES = GatewayExecutors.readIntSetting(
             "mage.web.websocketMaxFrameBytes",
             "MAGE_GATEWAY_WEBSOCKET_MAX_FRAME_BYTES",
-            64 * 1024,
+            1024 * 1024,
             1024
     );
 
