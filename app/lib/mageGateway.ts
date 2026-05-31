@@ -1,4 +1,5 @@
 import type { Deck, DeckEntry, ScryfallCard } from "./types";
+import { effectivePlaytestUsername } from "./appSettings";
 import {
   defaultMageAiType,
   defaultMagePlayerRating,
@@ -245,6 +246,7 @@ export type MageGatewayEvent = {
 type StartOptions = {
   signal?: AbortSignal;
   opponentDeck?: Deck;
+  playerName?: string;
 };
 
 const DEFAULT_MAGE_GATEWAY_URL = "http://127.0.0.1:17888";
@@ -304,7 +306,7 @@ export async function startMageGame(
     mageHost: server.host,
     magePort: server.port,
     opponentType: config.opponentType,
-    playerName: "Player",
+    playerName: options.playerName?.trim() || effectivePlaytestUsername(),
     playerRating: defaultMagePlayerRating(config.playerRating),
     opponentName: config.opponentType === "human" ? "Opponent" : "Sparring AI",
     ai: defaultMageAiType(config.ai),

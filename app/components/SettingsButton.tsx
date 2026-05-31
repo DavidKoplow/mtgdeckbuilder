@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  effectivePlaytestUsername,
+  PLAYTEST_USERNAME_MAX_LENGTH,
+  usePlaytestUsername,
+} from "../lib/appSettings";
 import { formatBytes, type OfflineModeState } from "../lib/offline";
 
 type Props = {
@@ -19,6 +24,8 @@ export function SettingsButton({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [playtestUsername, setPlaytestUsername] = usePlaytestUsername();
+  const playtestDisplayName = effectivePlaytestUsername({ playtestUsername });
 
   useEffect(() => {
     if (!open) return;
@@ -130,6 +137,28 @@ export function SettingsButton({
                 >
                   How to use deck builder?
                 </button>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="text-sm font-semibold">Playtest</h3>
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-text-muted">Display name</span>
+                  <input
+                    type="text"
+                    value={playtestUsername}
+                    onChange={(event) => setPlaytestUsername(event.currentTarget.value)}
+                    placeholder="Player"
+                    maxLength={PLAYTEST_USERNAME_MAX_LENGTH}
+                    autoComplete="nickname"
+                    className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text outline-none transition focus:border-accent"
+                  />
+                </label>
+                <p className="text-xs leading-5 text-text-muted">
+                  Used as your name in MAGE playtest games
+                  {playtestUsername.trim()
+                    ? ` (currently "${playtestDisplayName}").`
+                    : `. Leave blank to use "${playtestDisplayName}".`}
+                </p>
               </section>
 
               <section className="space-y-3">

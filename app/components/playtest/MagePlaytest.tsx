@@ -16,7 +16,7 @@ import { useConvex, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { AppIcon } from "../AppIcon";
 import { CardHover } from "../CardHover";
-import { ManaCost, ManaPip, ManaText, ManaTextBlock } from "../ManaCost";
+import { ManaCost, ManaPip, ManaText, ManaTextBlock, replaceMageCardReferences } from "../ManaCost";
 import { useFinePointer, useMediaQuery } from "../../hooks/useMediaQuery";
 import { getCardByName, getCardImage } from "../../lib/scryfall";
 import {
@@ -59,6 +59,7 @@ import {
   type MageServerOption,
   type MageServerId,
 } from "../../lib/magePlaytestConfig";
+import { effectivePlaytestUsername } from "../../lib/appSettings";
 import type {
   Deck,
   DeckEntry,
@@ -371,6 +372,14 @@ type CombatRoles = {
   blockers: Set<string>;
   possibleAttackers: Set<string>;
   possibleBlockers: Set<string>;
+  blockTargetAttackers: Set<string>;
+  selectedBlockAttackerId: string | null;
+};
+
+type PendingBlockAssignment = {
+  attackerId: string;
+  blockerId: string;
+  promptKey: string;
 };
 
 // Turn structure for the phase track. Each entry groups a phase with its steps.
@@ -630,27 +639,27 @@ function stepStyleForKey(stepKey: string, phaseKey: string): PhaseStepStyle {
 const SKIP_ACTIONS: Array<{ action: string; label: string; title: string }> = [
   {
     action: "PASS_PRIORITY_UNTIL_TURN_END_STEP",
-    label: "End of turn",
+    label: "End step",
     title: "Pass priority until the end step (F5)",
   },
   {
     action: "PASS_PRIORITY_UNTIL_NEXT_MAIN_PHASE",
-    label: "Next main",
+    label: "Next main phase",
     title: "Pass priority until the next main phase (F6)",
   },
   {
     action: "PASS_PRIORITY_UNTIL_MY_NEXT_TURN",
-    label: "My turn",
-    title: "Pass priority until my next turn (F9)",
+    label: "First main phase of your next turn",
+    title: "Pass priority until the first main phase of your next turn (F9)",
   },
   {
     action: "PASS_PRIORITY_UNTIL_STACK_RESOLVED",
-    label: "Stack resolves",
+    label: "Stack resolved",
     title: "Pass priority until the stack resolves (F8)",
   },
   {
     action: "PASS_PRIORITY_UNTIL_END_STEP_BEFORE_MY_NEXT_TURN",
-    label: "Before my turn",
+    label: "End step before your turn",
     title: "Pass priority until the end step before my next turn (F11)",
   },
   {
@@ -702,10 +711,14 @@ export function MagePlaytest({
   const [cardImageLookupCycle, setCardImageLookupCycle] = useState(0);
   const [gameEndDismissedKey, setGameEndDismissedKey] = useState<string | null>(null);
   const [handViewKey, setHandViewKey] = useState(MY_HAND_VIEW_KEY);
+  const [selectedBlockAttackerId, setSelectedBlockAttackerId] = useState<string | null>(null);
+  const [autoSkipEmptySteps, setAutoSkipEmptySteps] = useState(false);
   const prevOpponentHandKeysRef = useRef("");
   const pendingCardImageNamesRef = useRef<Set<string>>(new Set());
   const failedCardImageNamesRef = useRef<Set<string>>(new Set());
   const cardImageLookupMountedRef = useRef(true);
+  const pendingBlockAssignmentRef = useRef<PendingBlockAssignment | null>(null);
+  const lastAutoSkipPromptRef = useRef<string | null>(null);
   const toastIdRef = useRef(0);
   const boardRef = useRef<HTMLElement | null>(null);
   const cardElementsRef = useRef<Map<string, HTMLElement>>(new Map());
@@ -797,7 +810,10 @@ export function MagePlaytest({
       ),
     [selectablePlayers]
   );
-  const playableIds = useMemo(() => collectPlayableIds(game), [game]);
+  const playableIds = useMemo(
+    () => collectPlayableIds(game, self, session.prompt),
+    [game, self, session.prompt]
+  );
   const manaPaymentTotal = useManaPaymentTotal(session.prompt);
   const canChooseCards = isCardChoicePrompt(session.prompt);
   const stackCards = cardsFromView(game?.stack);
@@ -811,6 +827,7 @@ export function MagePlaytest({
     [stackTargetIds, promptSelectedTargetIds]
   );
   const stackSourceIds = useMemo(() => collectCardIds(stackCards), [stackCards]);
+  const stackHasObjects = stackCards.length > 0;
   const exileCards = useMemo(
     () => cardsFromExileZones(game?.exile, players),
     [game?.exile, players]
@@ -823,13 +840,26 @@ export function MagePlaytest({
   const selfManaPool = manaPoolFromView(self?.manaPool);
   const combatGroups = useMemo(() => combatGroupsFromView(game), [game]);
   const combatRoles = useMemo(
-    () => collectCombatRoles(game, session.prompt),
-    [game, session.prompt]
+    () => collectCombatRoles(game, session.prompt, selectedBlockAttackerId),
+    [game, session.prompt, selectedBlockAttackerId]
   );
   const combatActive = combatGroups.length > 0;
   const gameOver = session.prompt?.type === "gameOver";
   const gameEndKey = `${session.sessionId ?? ""}:${session.prompt?.messageId ?? session.prompt?.sequence ?? ""}`;
   const gameEndOpen = gameOver && gameEndDismissedKey !== gameEndKey;
+  const autoSkipHasAction = useMemo(
+    () => hasMeaningfulAvailableActions(game, self, session.prompt),
+    [game, self, session.prompt]
+  );
+  const autoSkipPromptKey = useMemo(
+    () => autoSkipDecisionKey(session.prompt, game),
+    [game, session.prompt]
+  );
+  const autoSkipReady =
+    autoSkipEmptySteps &&
+    canAct &&
+    isAutoSkippablePrompt(session.prompt) &&
+    (stackHasObjects || !autoSkipHasAction);
 
   const getPublicOpponentDeck = useCallback(
     (publicId: string) =>
@@ -926,6 +956,88 @@ export function MagePlaytest({
     [canChooseCards, interactiveIds, notify, session]
   );
 
+  const queueBlockAssignment = useCallback(
+    (blockerId: string, attackerId: string) => {
+      pendingBlockAssignmentRef.current = {
+        blockerId: normalizeUuid(blockerId),
+        attackerId: normalizeUuid(attackerId),
+        promptKey: promptPanelKey(session.prompt),
+      };
+    },
+    [session.prompt]
+  );
+
+  const chooseCombatCard = useCallback(
+    (card: MageCardView): boolean => {
+      const id = card.id;
+      if (!id) return chooseCard(card);
+      const normalizedId = normalizeUuid(id);
+      const selectingBlockers = isSelectingBlockersPrompt(session.prompt);
+      const blockTarget =
+        selectingBlockers &&
+        idInInteractiveSet(combatRoles.blockTargetAttackers, normalizedId);
+      const possibleBlocker =
+        selectingBlockers &&
+        idInInteractiveSet(combatRoles.possibleBlockers, normalizedId);
+
+      if (blockTarget && !possibleBlocker) {
+        setSelectedBlockAttackerId(normalizedId);
+        pendingBlockAssignmentRef.current = null;
+        notify(`Choose blockers for ${cardName(card)}.`);
+        return true;
+      }
+
+      if (possibleBlocker && selectedBlockAttackerId) {
+        queueBlockAssignment(normalizedId, selectedBlockAttackerId);
+        return chooseCard(card);
+      }
+
+      if (possibleBlocker) {
+        pendingBlockAssignmentRef.current = null;
+      }
+
+      return chooseCard(card);
+    },
+    [
+      chooseCard,
+      combatRoles.blockTargetAttackers,
+      combatRoles.possibleBlockers,
+      notify,
+      queueBlockAssignment,
+      selectedBlockAttackerId,
+      session.prompt,
+    ]
+  );
+
+  const assignBlockerToAttacker = useCallback(
+    (blockerId: string, attacker: MageCardView): boolean => {
+      const attackerId = attacker.id;
+      if (!attackerId) {
+        notify("MAGE did not provide an id for that attacker.");
+        return false;
+      }
+      if (!idInInteractiveSet(combatRoles.possibleBlockers, blockerId)) {
+        notify("That creature is not currently a valid blocker.");
+        return false;
+      }
+      if (!idInInteractiveSet(combatRoles.blockTargetAttackers, attackerId)) {
+        notify("That creature is not currently an attacker you can block.");
+        return false;
+      }
+      setSelectedBlockAttackerId(normalizeUuid(attackerId));
+      queueBlockAssignment(blockerId, attackerId);
+      session.chooseUuid(blockerId);
+      return true;
+    },
+    [
+      combatRoles.blockTargetAttackers,
+      combatRoles.possibleBlockers,
+      notify,
+      queueBlockAssignment,
+      session,
+    ]
+  );
+
   const choosePlayer = useCallback(
     (playerId: string) => {
       if (session.status !== "connected") {
@@ -947,12 +1059,12 @@ export function MagePlaytest({
 
   const chooseSelfBattlefieldCard = useCallback(
     (card: MageCardView) => {
-      const chosen = chooseCard(card);
+      const chosen = chooseCombatCard(card);
       if (!chosen) return;
       const mana = manaProducedByActivation(card, session.prompt);
       if (mana) session.addManaToPool(mana);
     },
-    [chooseCard, session]
+    [chooseCombatCard, session]
   );
 
   const spendMana = useCallback(
@@ -994,6 +1106,16 @@ export function MagePlaytest({
     },
     [canChooseCards, notify, session.spectator, session.status]
   );
+
+  useEffect(() => {
+    if (!autoSkipReady) {
+      if (autoSkipHasAction) lastAutoSkipPromptRef.current = null;
+      return;
+    }
+    if (lastAutoSkipPromptRef.current === autoSkipPromptKey) return;
+    lastAutoSkipPromptRef.current = autoSkipPromptKey;
+    session.passPriority();
+  }, [autoSkipHasAction, autoSkipPromptKey, autoSkipReady, session]);
 
   useEffect(() => {
     cardImageLookupMountedRef.current = true;
@@ -1223,6 +1345,45 @@ export function MagePlaytest({
   }, [contextMenu]);
 
   useEffect(() => {
+    const pending = pendingBlockAssignmentRef.current;
+    const prompt = session.prompt;
+    if (!pending) {
+      if (
+        selectedBlockAttackerId &&
+        !isSelectingBlockersPrompt(prompt) &&
+        !isChoosingBlockTargetPrompt(prompt)
+      ) {
+        setSelectedBlockAttackerId(null);
+      }
+      return;
+    }
+
+    if (isChoosingBlockTargetPrompt(prompt)) {
+      const targetIds = collectBlockingTargetIds(prompt, game);
+      if (targetIds.size > 0 && !idInInteractiveSet(targetIds, pending.attackerId)) {
+        pendingBlockAssignmentRef.current = null;
+        setSelectedBlockAttackerId(null);
+        notify("That blocker cannot block the selected attacker. Choose a highlighted attacker instead.");
+        return;
+      }
+      pendingBlockAssignmentRef.current = null;
+      setSelectedBlockAttackerId(pending.attackerId);
+      session.chooseUuid(pending.attackerId);
+      return;
+    }
+
+    if (isSelectingBlockersPrompt(prompt)) {
+      if (promptPanelKey(prompt) !== pending.promptKey) {
+        pendingBlockAssignmentRef.current = null;
+      }
+      return;
+    }
+
+    pendingBlockAssignmentRef.current = null;
+    setSelectedBlockAttackerId(null);
+  }, [game, notify, selectedBlockAttackerId, session]);
+
+  useEffect(() => {
     if (!combatActive) return;
     const bump = () => setCombatTick((tick) => tick + 1);
     window.addEventListener("resize", bump);
@@ -1417,6 +1578,13 @@ export function MagePlaytest({
                 onBlocked={notify}
                 onAction={(action) => session.playerAction(action)}
               />
+              <AutoSkipToggle
+                enabled={autoSkipEmptySteps}
+                active={autoSkipReady}
+                disabled={!canAct}
+                onToggle={() => setAutoSkipEmptySteps((value) => !value)}
+                onBlocked={notify}
+              />
             </div>
             <div className="h-6 w-px shrink-0 bg-border" />
             <div className="flex shrink-0 items-center gap-1.5">
@@ -1474,7 +1642,8 @@ export function MagePlaytest({
               castingIds={stackSourceIds}
               canChooseCards={canChooseCards}
               spectator={session.spectator}
-              onCardActivate={chooseCard}
+              onCardActivate={chooseCombatCard}
+              onBlockerDropOnAttacker={assignBlockerToAttacker}
               onPlayerSelect={choosePlayer}
               onBlocked={notifyBlockedCard}
               onHover={onHover}
@@ -1496,6 +1665,7 @@ export function MagePlaytest({
               canChooseCards={canChooseCards}
               spectator={session.spectator}
               onCardActivate={chooseSelfBattlefieldCard}
+              onBlockerDropOnAttacker={assignBlockerToAttacker}
               onPlayerSelect={choosePlayer}
               onPlayCardFromHand={(card) => {
                 const id = card.id;
@@ -2147,7 +2317,7 @@ function PlaytestSetupDialog({
               Playtest {deck.name}
             </h2>
             <div className="mt-1 text-xs text-text-subtle">
-              MAGE gateway {mageGatewayBaseUrl()}
+              Playing as {effectivePlaytestUsername()} · MAGE gateway {mageGatewayBaseUrl()}
               {opponentType === "human" ? ` · ${selectedMageServer.host}` : ""}
             </div>
           </div>
@@ -3178,6 +3348,7 @@ function useMagePlaytest(deck: Deck, initialGameId?: string): UseMagePlaytest {
       const response = await startMageGame(deck, config, {
         signal: abort.signal,
         opponentDeck,
+        playerName: effectivePlaytestUsername(),
       });
       if (runRef.current !== runId) return;
       writeStoredMageSession(deck.id, response.id, config);
@@ -3798,6 +3969,45 @@ function ActionButton({
   );
 }
 
+function AutoSkipToggle({
+  enabled,
+  active,
+  disabled,
+  onToggle,
+  onBlocked,
+}: {
+  enabled: boolean;
+  active: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  onBlocked: (message: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={enabled}
+      aria-disabled={disabled ? true : undefined}
+      title="Automatically pass priority to resolve stack objects, and skip empty priority windows when no cast, play, or non-mana activated action is available."
+      onClick={() => {
+        if (disabled) {
+          onBlocked("Connect to MAGE before using auto-skip.");
+          return;
+        }
+        onToggle();
+      }}
+      className={`min-h-8 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+        enabled
+          ? active
+            ? "border-emerald-400 bg-emerald-50 text-emerald-700 shadow-sm"
+            : "border-accent/40 bg-accent-subtle text-accent"
+          : "border-border bg-white text-text-muted hover:border-border-strong hover:text-text"
+      } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+    >
+      Auto-skip
+    </button>
+  );
+}
+
 function PlaytestToastOverlay({
   toast,
   onClose,
@@ -3912,6 +4122,7 @@ function PlayerZone({
   canChooseCards,
   spectator,
   onCardActivate,
+  onBlockerDropOnAttacker,
   onPlayCardFromHand,
   onPlayerSelect,
   onBlocked,
@@ -3933,6 +4144,7 @@ function PlayerZone({
   canChooseCards: boolean;
   spectator: boolean;
   onCardActivate: (card: MageCardView) => void;
+  onBlockerDropOnAttacker?: (blockerId: string, attacker: MageCardView) => boolean;
   onPlayCardFromHand?: (card: MageCardView) => boolean;
   onPlayerSelect?: (playerId: string) => void;
   onBlocked: (card: MageCardView) => void;
@@ -4049,6 +4261,7 @@ function PlayerZone({
           cardContext="battlefield"
           spectator={spectator}
           onCardActivate={onCardActivate}
+          onBlockerDropOnAttacker={onBlockerDropOnAttacker}
           onBlocked={onBlocked}
           onHover={onHover}
           cardWidth={
@@ -4073,6 +4286,7 @@ function PlayerZone({
             cardContext="battlefield"
             spectator={spectator}
             onCardActivate={onCardActivate}
+            onBlockerDropOnAttacker={onBlockerDropOnAttacker}
             onBlocked={onBlocked}
             onHover={onHover}
             cardWidth={compact ? cardSizes.landsCompact : cardSizes.lands}
@@ -4122,6 +4336,88 @@ function useRegisterAvatar(playerId?: string) {
   );
 }
 
+function PlayerLifeBadge({
+  life,
+  playerKey,
+}: {
+  life: number | undefined;
+  playerKey?: string;
+}) {
+  const prevLifeRef = useRef<number | null>(null);
+  const prevPlayerKeyRef = useRef<string | undefined>(undefined);
+  const clearTimerRef = useRef<number | null>(null);
+  const [effect, setEffect] = useState<"damage" | "heal" | null>(null);
+  const [deltaText, setDeltaText] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prevPlayerKeyRef.current !== playerKey) {
+      prevPlayerKeyRef.current = playerKey;
+      prevLifeRef.current = typeof life === "number" ? life : null;
+      setEffect(null);
+      setDeltaText(null);
+      return;
+    }
+
+    if (typeof life !== "number") {
+      prevLifeRef.current = null;
+      return;
+    }
+
+    const prev = prevLifeRef.current;
+    if (prev !== null && prev !== life) {
+      const diff = life - prev;
+      setEffect(diff > 0 ? "heal" : "damage");
+      setDeltaText(diff > 0 ? `+${diff}` : `${diff}`);
+
+      if (clearTimerRef.current !== null) {
+        window.clearTimeout(clearTimerRef.current);
+      }
+      clearTimerRef.current = window.setTimeout(() => {
+        setEffect(null);
+        setDeltaText(null);
+        clearTimerRef.current = null;
+      }, 750);
+    }
+    prevLifeRef.current = life;
+  }, [life, playerKey]);
+
+  useEffect(
+    () => () => {
+      if (clearTimerRef.current !== null) {
+        window.clearTimeout(clearTimerRef.current);
+      }
+    },
+    []
+  );
+
+  const display = typeof life === "number" ? life : "—";
+
+  return (
+    <span className="relative inline-flex">
+      <span
+        className={`rounded-full border border-border bg-white px-1.5 py-0.5 font-semibold text-text tabular-nums ${
+          effect === "damage"
+            ? "playtest-life-damage"
+            : effect === "heal"
+              ? "playtest-life-heal"
+              : ""
+        }`}
+      >
+        ♥ {display}
+      </span>
+      {deltaText ? (
+        <span
+          className={`playtest-life-delta pointer-events-none absolute -top-3 left-1/2 text-[10px] font-bold tabular-nums ${
+            effect === "heal" ? "text-emerald-600" : "text-[color:var(--danger)]"
+          }`}
+        >
+          {deltaText}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function PlayerStatusBar({
   player,
   graveyard,
@@ -4145,9 +4441,7 @@ function PlayerStatusBar({
 
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-text-subtle">
-      <span className="rounded-full border border-border bg-white px-1.5 py-0.5 font-semibold text-text">
-        ♥ {player?.life ?? "—"}
-      </span>
+      <PlayerLifeBadge life={player?.life} playerKey={player?.playerId} />
       <span>Hand {player?.handCount ?? "—"}</span>
       <span>Library {player?.libraryCount ?? "—"}</span>
       <ZoneChip label="Grave" count={graveyard.length} onClick={() => onOpenZone("Graveyard", graveyard)} />
@@ -4627,6 +4921,7 @@ function CardRail({
   cardContext = "zone",
   spectator,
   onCardActivate,
+  onBlockerDropOnAttacker,
   onBlocked,
   onHover,
   cardWidth = CARD_WIDTH,
@@ -4647,6 +4942,7 @@ function CardRail({
   cardContext?: CardActionContext;
   spectator: boolean;
   onCardActivate: (card: MageCardView) => void;
+  onBlockerDropOnAttacker?: (blockerId: string, attacker: MageCardView) => boolean;
   onBlocked: (card: MageCardView) => void;
   onHover: (src: string | undefined, x: number, y: number) => void;
   cardWidth?: number;
@@ -4680,19 +4976,27 @@ function CardRail({
               !!cardId &&
               !!combatRoles?.possibleBlockers &&
               idInInteractiveSet(combatRoles.possibleBlockers, cardId);
+            const blockTargetAttacker =
+              !!cardId &&
+              !!combatRoles?.blockTargetAttackers &&
+              idInInteractiveSet(combatRoles.blockTargetAttackers, cardId);
+            const selectedBlockAttacker =
+              !!cardId &&
+              !!combatRoles?.selectedBlockAttackerId &&
+              normalizeUuid(combatRoles.selectedBlockAttackerId) === normalizeUuid(cardId);
             const interactive =
               !spectator &&
               (highlighted ||
                 playable ||
                 possibleAttacker ||
                 possibleBlocker ||
+                blockTargetAttacker ||
                 (canChooseCards && interactiveIds.size === 0));
             const draggable =
               !spectator &&
               !!cardId &&
-              draggableFromHand &&
-              cardContext === "hand" &&
-              playable;
+              ((draggableFromHand && cardContext === "hand" && playable) ||
+                (cardContext === "battlefield" && possibleBlocker));
             return (
               <MageCardTile
                 key={card.id ?? card.name}
@@ -4725,7 +5029,10 @@ function CardRail({
                 }
                 possibleAttacker={possibleAttacker}
                 possibleBlocker={possibleBlocker}
+                blockTargetAttacker={blockTargetAttacker}
+                selectedBlockAttacker={selectedBlockAttacker}
                 onActivate={onCardActivate}
+                onBlockerDropOnAttacker={onBlockerDropOnAttacker}
                 onBlocked={onBlocked}
                 onHover={onHover}
               />
@@ -4759,7 +5066,10 @@ function MageCardTile({
   blocking,
   possibleAttacker,
   possibleBlocker,
+  blockTargetAttacker,
+  selectedBlockAttacker,
   onActivate,
+  onBlockerDropOnAttacker,
   onBlocked,
   onHover,
 }: {
@@ -4780,12 +5090,16 @@ function MageCardTile({
   blocking?: boolean;
   possibleAttacker?: boolean;
   possibleBlocker?: boolean;
+  blockTargetAttacker?: boolean;
+  selectedBlockAttacker?: boolean;
   onActivate: (card: MageCardView) => void;
+  onBlockerDropOnAttacker?: (blockerId: string, attacker: MageCardView) => boolean;
   onBlocked: (card: MageCardView) => void;
   onHover: (src: string | undefined, x: number, y: number) => void;
 }) {
   const board = use(BoardContext);
   const finePointer = useFinePointer();
+  const [dropOver, setDropOver] = useState(false);
   const height = Math.round(width * 1.4);
   const tapped = card.tapped === true || card.rotate === true;
   const slotW = tapped ? height : width;
@@ -4798,6 +5112,8 @@ function MageCardTile({
   const pt = isPermanent ? powerToughness(card) : "";
   const damage = typeof card.damage === "number" ? card.damage : 0;
   const summoningSick = isPermanent && card.summoningSickness === true;
+  const faceDown = isFaceDownLikeCard(card);
+  const canDropBlocker = !!blockTargetAttacker && !!onBlockerDropOnAttacker;
 
   const registerRef = useCallback(
     (el: HTMLElement | null) => {
@@ -4818,7 +5134,11 @@ function MageCardTile({
     ? "playtest-attacker"
     : blocking
       ? "playtest-blocker"
-      : possibleAttacker
+      : selectedBlockAttacker
+        ? "playtest-selected-block-target"
+        : blockTargetAttacker
+          ? "playtest-block-target-pulse"
+          : possibleAttacker
         ? "playtest-possible-attacker-pulse"
         : possibleBlocker
           ? "playtest-possible-blocker-pulse"
@@ -4830,6 +5150,30 @@ function MageCardTile({
     const payload: MageCardDragPayload = { id: card.id, from: context };
     event.dataTransfer.setData(MAGE_CARD_DRAG_TYPE, JSON.stringify(payload));
     event.dataTransfer.setData("text/plain", card.id);
+  };
+
+  const onDragOver = (event: React.DragEvent) => {
+    if (!canDropBlocker) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    setDropOver(true);
+  };
+
+  const onDrop = (event: React.DragEvent) => {
+    if (!canDropBlocker || !onBlockerDropOnAttacker) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDropOver(false);
+    const raw = event.dataTransfer.getData(MAGE_CARD_DRAG_TYPE);
+    if (!raw) return;
+    try {
+      const payload = JSON.parse(raw) as MageCardDragPayload;
+      if (payload.from !== "battlefield" || !payload.id) return;
+      onBlockerDropOnAttacker(payload.id, card);
+    } catch {
+      // ignore malformed drops
+    }
   };
 
   return (
@@ -4857,6 +5201,14 @@ function MageCardTile({
         aria-disabled={!interactive}
         draggable={draggableCard && finePointer}
         onDragStart={onDragStart}
+        onDragEnter={() => {
+          if (canDropBlocker) setDropOver(true);
+        }}
+        onDragLeave={() => {
+          if (canDropBlocker) setDropOver(false);
+        }}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
         title={name}
         onMouseEnter={(event) => onHover(image, event.clientX, event.clientY)}
         onMouseMove={(event) => onHover(image, event.clientX, event.clientY)}
@@ -4897,7 +5249,7 @@ function MageCardTile({
             : "rotate(0deg)",
         }}
       >
-        {image ? (
+        {image && !faceDown ? (
           <img
             src={image}
             alt={name}
@@ -4909,6 +5261,13 @@ function MageCardTile({
                   ? "ring-2 ring-accent"
                   : ""
             } ${combatClass}`}
+          />
+        ) : faceDown ? (
+          <FaceDownCardFront
+            card={card}
+            playable={playable}
+            highlighted={highlighted}
+            combatClass={combatClass}
           />
         ) : (
           <div
@@ -4929,6 +5288,14 @@ function MageCardTile({
               {pt ? <span>{pt}</span> : null}
             </div>
           </div>
+        )}
+        {dropOver && canDropBlocker && (
+          <span className="pointer-events-none absolute inset-0 z-30 rounded-lg border-2 border-blue-500 bg-blue-500/10" />
+        )}
+        {playable && faceDown && (
+          <span className="pointer-events-none absolute left-1 right-1 top-1 z-20 rounded bg-emerald-600/95 px-1 py-0.5 text-center text-[9px] font-bold uppercase text-white shadow">
+            Turn face up
+          </span>
         )}
       </div>
 
@@ -4994,6 +5361,45 @@ function MageCardTile({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function FaceDownCardFront({
+  card,
+  playable,
+  highlighted,
+  combatClass,
+}: {
+  card: MageCardView;
+  playable?: boolean;
+  highlighted: boolean;
+  combatClass: string;
+}) {
+  const kind = faceDownKind(card);
+  return (
+    <div
+      className={`playtest-face-down-card flex h-full w-full flex-col justify-between rounded-lg p-2 text-[10px] text-white shadow-sm ring-1 ring-black/25 ${
+        playable
+          ? "ring-2 ring-emerald-400 playtest-playable-outline"
+          : highlighted
+            ? "ring-2 ring-accent"
+            : ""
+      } ${combatClass}`}
+    >
+      <div>
+        <div className="text-[9px] font-bold uppercase tracking-wide text-white/75">
+          Face down
+        </div>
+        <div className="mt-1 font-semibold">{kind}</div>
+      </div>
+      <div className="rounded-md border border-white/25 bg-black/20 px-1.5 py-1">
+        <div className="font-semibold">Creature</div>
+        <div className="mt-0.5 flex items-center justify-between text-[10px]">
+          <span>{faceDownRulesText(card)}</span>
+          <span className="font-bold tabular-nums">2/2</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -5709,11 +6115,16 @@ function PromptPanelContent({
   const isCardChoice =
     method === "GAME_SELECT" || method === "GAME_TARGET";
   const promptMessage =
-    normalizePromptMessage(plainMageText(prompt.message || prompt.choice?.message)) ||
+    normalizePromptDisplayMessage(prompt.message || prompt.choice?.message) ||
     "Choose an action";
-  const promptSubMessage = plainMageText(prompt.choice?.subMessage);
+  const promptSubMessage = mageDisplayText(prompt.choice?.subMessage);
   const yesLabel = optionText(prompt.options, "UI.left.btn.text", "Yes");
   const noLabel = optionText(prompt.options, "UI.right.btn.text", "No");
+  const specialLabel = optionText(
+    prompt.options,
+    "specialButton",
+    prompt.gameView?.special ? "Special" : ""
+  );
 
   return (
     <section
@@ -5869,9 +6280,9 @@ function PromptPanelContent({
             <ActionButton onClick={onPassPriority}>Pass</ActionButton>
           )}
 
-          {prompt.gameView?.special && (
+          {specialLabel && (
             <ActionButton onClick={() => session.chooseString("special")}>
-              Special
+              {specialLabel}
             </ActionButton>
           )}
 
@@ -6013,10 +6424,10 @@ function SkipActionsMenu({
         onBlocked={onBlocked}
         onClick={() => setOpen((value) => !value)}
       >
-        Skip ▾
+        Skip to ▾
       </ActionButton>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-52 rounded-lg border border-border bg-surface-raised p-1 shadow-lg">
+        <div className="absolute left-0 top-full z-30 mt-1 w-64 rounded-lg border border-border bg-surface-raised p-1 shadow-lg">
           {SKIP_ACTIONS.map((item) => (
             <button
               key={item.action}
@@ -6141,9 +6552,14 @@ function BigCardPanel({
   }
 
   const image = imageFor(card);
-  const rules = (card.rules ?? [])
-    .map((rule) => plainMageText(rule))
-    .filter((rule) => rule.length > 0);
+  const resolvedName = cardReferenceName(card);
+  const rules = isFaceDownLikeCard(card)
+    ? faceDownInspectRules(card)
+    : (card.rules ?? [])
+        .map((rule) =>
+          replaceMageCardReferences(mageDisplayText(rule), resolvedName)
+        )
+        .filter((rule) => rule.length > 0);
   const pt = powerToughness(card);
 
   return (
@@ -7008,7 +7424,8 @@ function combatGroupsFromView(game: MageGameView | null): MageCombatGroupView[] 
 
 function collectCombatRoles(
   game: MageGameView | null,
-  prompt: MageGatewayEvent | null
+  prompt: MageGatewayEvent | null,
+  selectedBlockAttackerId: string | null
 ): CombatRoles {
   const attackers = collectCombatAttackerIds(game);
   const blockers = collectCombatBlockerIds(game);
@@ -7017,6 +7434,8 @@ function collectCombatRoles(
     blockers,
     possibleAttackers: idsFromOptionsList(prompt?.options, "possibleAttackers"),
     possibleBlockers: idsFromOptionsList(prompt?.options, "possibleBlockers"),
+    blockTargetAttackers: collectSelectableBlockAttackerIds(game, prompt),
+    selectedBlockAttackerId,
   };
 }
 
@@ -7032,6 +7451,34 @@ function collectCombatBlockerIds(game: MageGameView | null): Set<string> {
   const ids = new Set<string>();
   for (const group of game?.combat ?? []) {
     for (const id of Object.keys(group.blockers ?? {})) ids.add(normalizeUuid(id));
+  }
+  return ids;
+}
+
+function collectSelectableBlockAttackerIds(
+  game: MageGameView | null,
+  prompt: MageGatewayEvent | null
+): Set<string> {
+  if (isChoosingBlockTargetPrompt(prompt)) {
+    return collectBlockingTargetIds(prompt, game);
+  }
+  if (isSelectingBlockersPrompt(prompt)) {
+    return collectCombatAttackerIds(game);
+  }
+  return new Set();
+}
+
+function collectBlockingTargetIds(
+  prompt: MageGatewayEvent | null,
+  game: MageGameView | null
+): Set<string> {
+  const ids = new Set<string>();
+  for (const id of targetIds(prompt?.targets)) ids.add(normalizeUuid(id));
+  for (const id of idsFromUnknownCollection(prompt?.options?.possibleTargets)) {
+    ids.add(normalizeUuid(id));
+  }
+  if (ids.size === 0 && isChoosingBlockTargetPrompt(prompt)) {
+    for (const id of collectCombatAttackerIds(game)) ids.add(normalizeUuid(id));
   }
   return ids;
 }
@@ -7085,6 +7532,14 @@ function isSelectingBlockersPrompt(prompt: MageGatewayEvent | null): boolean {
     method === "GAME_SELECT" &&
     (idsFromOptionsList(prompt?.options, "possibleBlockers").size > 0 ||
       /select blockers/i.test(plainMageText(prompt?.message)))
+  );
+}
+
+function isChoosingBlockTargetPrompt(prompt: MageGatewayEvent | null): boolean {
+  const method = prompt?.callbackMethod ?? prompt?.type;
+  return (
+    (method === "GAME_TARGET" || method === "GAME_SELECT") &&
+    /select attacker to block/i.test(plainMageText(prompt?.message))
   );
 }
 
@@ -7186,7 +7641,9 @@ function manaProducedByActivation(
   card: MageCardView,
   prompt: MageGatewayEvent | null
 ): ManaPoolDelta | null {
-  if (!shouldOptimisticallyAddManaForPrompt(prompt) || card.faceDown) return null;
+  if (!shouldOptimisticallyAddManaForPrompt(prompt) || isFaceDownLikeCard(card)) {
+    return null;
+  }
   const basicLandMana = BASIC_LAND_MANA[normalizeName(cardName(card))];
   if (basicLandMana) return basicLandMana;
 
@@ -7210,7 +7667,7 @@ function manaProducedByActivation(
 }
 
 function isLikelyManaSource(card: MageCardView): boolean {
-  if (card.faceDown) return false;
+  if (isFaceDownLikeCard(card)) return false;
   if (BASIC_LAND_MANA[normalizeName(cardName(card))]) return true;
   return (card.rules ?? []).some((rule) => /\badds?\b/i.test(plainMageText(rule)));
 }
@@ -7228,6 +7685,133 @@ function shouldOptimisticallyAddManaForPrompt(
     method === "GAME_UPDATE" ||
     method === "GAME_UPDATE_AND_INFORM"
   );
+}
+
+function isAutoSkippablePrompt(prompt: MageGatewayEvent | null): boolean {
+  if (!prompt) return false;
+  const method = prompt.callbackMethod ?? prompt.type;
+  const message = plainMageText(prompt.message);
+  return method === "GAME_SELECT" && isPriorityMessage(message);
+}
+
+function autoSkipDecisionKey(
+  prompt: MageGatewayEvent | null,
+  game: MageGameView | null
+): string {
+  return [
+    prompt?.messageId ?? "",
+    prompt?.sequence ?? "",
+    prompt?.callbackMethod ?? prompt?.type ?? "",
+    game?.turn ?? "",
+    game?.phase ?? "",
+    game?.step ?? "",
+  ].join(":");
+}
+
+function hasMeaningfulAvailableActions(
+  game: MageGameView | null,
+  self: MagePlayerView | undefined,
+  prompt: MageGatewayEvent | null
+): boolean {
+  if (!game || !self) return false;
+  if (prompt?.gameView?.special || game.special) return true;
+  const playableRecords = game.canPlayObjects?.objects;
+  if (playableRecords && isPlainObject(playableRecords)) {
+    const cardsById = indexActionDetectionCardsById(
+      collectActionDetectionCards(game, self)
+    );
+    for (const [id, value] of Object.entries(playableRecords)) {
+      const card = cardsById.get(normalizeUuid(id));
+      if (playableRecordHasMeaningfulAction(value, card)) return true;
+    }
+  }
+  return false;
+}
+
+function collectActionDetectionCards(
+  game: MageGameView,
+  self: MagePlayerView
+): ActionDetectionCard[] {
+  const cards: ActionDetectionCard[] = [];
+  const addCards = (
+    view: MageCardsView | undefined | null,
+    zone: ActionDetectionZone
+  ) => {
+    cards.push(...cardsFromView(view).map((card) => ({ card, zone })));
+  };
+  addCards(game.myHand, "hand");
+  addCards(game.stack, "stack");
+  addCards(self.battlefield, "battlefield");
+  addCards(self.graveyard, "graveyard");
+  addCards(self.exile, "exile");
+  addCards(self.sideboard, "sideboard");
+  for (const card of self.commandList ?? []) cards.push({ card, zone: "command" });
+  for (const card of self.commandObjectList ?? []) {
+    cards.push({ card, zone: "command" });
+  }
+  for (const zone of exileZonesFromGame(game)) addCards(zone, "exile");
+  return cards;
+}
+
+type ActionDetectionZone =
+  | "hand"
+  | "battlefield"
+  | "graveyard"
+  | "exile"
+  | "sideboard"
+  | "command"
+  | "stack";
+
+type ActionDetectionCard = {
+  card: MageCardView;
+  zone: ActionDetectionZone;
+};
+
+function indexActionDetectionCardsById(
+  cards: ActionDetectionCard[]
+): Map<string, ActionDetectionCard> {
+  const byId = new Map<string, ActionDetectionCard>();
+  for (const entry of cards) {
+    if (entry.card.id) byId.set(normalizeUuid(entry.card.id), entry);
+  }
+  return byId;
+}
+
+function playableRecordHasMeaningfulAction(
+  value: unknown,
+  entry?: ActionDetectionCard
+): boolean {
+  if (entry && entry.zone !== "battlefield") return true;
+  if (entry && !isLikelyManaSource(entry.card)) return true;
+  if (!isPlainObject(value)) return true;
+  const explicitBuckets = [
+    value.basicPlayAbilities,
+    value.basicCastAbilities,
+    value.other,
+  ];
+  if (explicitBuckets.some((bucket) => playableBucketCount(bucket) > 0)) return true;
+  if (playableBucketCount(value.basicManaAbilities) > 0) {
+    return false;
+  }
+  const knownKeys = new Set([
+    "basicManaAbilities",
+    "basicPlayAbilities",
+    "basicCastAbilities",
+    "other",
+  ]);
+  for (const [key, nested] of Object.entries(value)) {
+    if (knownKeys.has(key)) continue;
+    if (playableBucketCount(nested) > 0) return true;
+  }
+  return !entry || !isLikelyManaSource(entry.card);
+}
+
+function playableBucketCount(value: unknown): number {
+  if (!value) return 0;
+  if (Array.isArray(value)) return value.length;
+  if (isPlainObject(value)) return Object.keys(value).length;
+  if (typeof value === "number") return value;
+  return 0;
 }
 
 function isPriorityMessage(message: string): boolean {
@@ -7258,12 +7842,36 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function collectPlayableIds(game: MageGameView | null): Set<string> {
+function collectPlayableIds(
+  game: MageGameView | null,
+  self: MagePlayerView | undefined,
+  prompt: MageGatewayEvent | null
+): Set<string> {
   const ids = new Set<string>();
   const objects = game?.canPlayObjects?.objects;
-  if (!objects || !isPlainObject(objects)) return ids;
-  for (const id of Object.keys(objects)) ids.add(normalizeUuid(id));
+  if (objects && isPlainObject(objects)) {
+    for (const id of Object.keys(objects)) ids.add(normalizeUuid(id));
+  }
+  if (canUseFaceDownSpecialAction(self, prompt)) {
+    for (const card of cardsFromView(self?.battlefield)) {
+      if (card.id && isFaceDownLikeCard(card)) ids.add(normalizeUuid(card.id));
+    }
+  }
   return ids;
+}
+
+function canUseFaceDownSpecialAction(
+  self: MagePlayerView | undefined,
+  prompt: MageGatewayEvent | null
+): boolean {
+  const method = prompt?.callbackMethod ?? prompt?.type;
+  const message = plainMageText(prompt?.message);
+  const priorityPrompt =
+    !method ||
+    method === "GAME_UPDATE" ||
+    method === "GAME_UPDATE_AND_INFORM" ||
+    (method === "GAME_SELECT" && isPriorityMessage(message));
+  return !!self && (self.hasPriority === true || priorityPrompt);
 }
 
 function collectInteractiveIds(
@@ -7276,11 +7884,6 @@ function collectInteractiveIds(
   const explicitTargets = targetIds(prompt?.targets);
   if (explicitTargets.length > 0) {
     for (const id of explicitTargets) ids.add(normalizeUuid(id));
-  } else if (method === "GAME_SELECT" || method === "GAME_TARGET") {
-    // Some effects only list choosable cards in cardsView1.
-    for (const card of cardsFromView(prompt?.cardsView1)) {
-      if (card.id) ids.add(normalizeUuid(card.id));
-    }
   }
   for (const id of idsFromUnknownCollection(prompt?.options?.possibleTargets)) ids.add(id);
   for (const id of idsFromUnknownCollection(prompt?.options?.chosenTargets)) ids.add(id);
@@ -7586,6 +8189,7 @@ function collectVisibleCardImageNames(
   const seen = new Set<string>();
   const addCard = (card: MageCardView | null | undefined) => {
     if (!card) return;
+    if (isFaceDownLikeCard(card)) return;
     for (const name of mageCardImageLookupNames(card)) {
       const key = normalizeName(name);
       if (!key || seen.has(key) || isUnknownCardImageName(key)) continue;
@@ -7624,6 +8228,7 @@ function collectVisibleCardImageNames(
 }
 
 function mageCardImageLookupNames(card: MageCardView): string[] {
+  if (isFaceDownLikeCard(card)) return [];
   const source = abilitySourceCard(card);
   const targets = source ? [source, card] : [card];
   const expanded: string[] = [];
@@ -7691,11 +8296,57 @@ function isMageToken(card: MageCardView): boolean {
   return objectType.includes("TOKEN");
 }
 
+function isFaceDownLikeCard(card: MageCardView): boolean {
+  if (
+    card.faceDown ||
+    card.morphed ||
+    card.disguised ||
+    card.manifested ||
+    card.cloaked
+  ) {
+    return true;
+  }
+  const name = normalizeName(
+    String(card.displayName || card.name || card.displayFullName || "")
+  );
+  return isUnknownCardImageName(name) || name === "face down creature";
+}
+
+function faceDownKind(card: MageCardView): string {
+  if (card.disguised) return "Disguised creature";
+  if (card.cloaked) return "Cloaked creature";
+  if (card.manifested) return "Manifested creature";
+  if (card.morphed) return "Morphed creature";
+  return "Face-down creature";
+}
+
+function faceDownRulesText(card: MageCardView): string {
+  if (card.disguised || card.cloaked) return "Ward {2}";
+  return "No name or mana cost";
+}
+
+function faceDownInspectRules(card: MageCardView): string[] {
+  if (card.disguised) {
+    return ["A face-down 2/2 creature with ward {2}. You may turn it face up when MAGE marks it playable."];
+  }
+  if (card.cloaked) {
+    return ["A face-down 2/2 creature with ward {2}. You may turn it face up when MAGE marks it playable."];
+  }
+  if (card.manifested) {
+    return ["A face-down 2/2 creature. You may turn it face up when MAGE marks it playable."];
+  }
+  if (card.morphed) {
+    return ["A face-down 2/2 creature. You may turn it face up when MAGE marks it playable."];
+  }
+  return ["A face-down 2/2 creature."];
+}
+
 function imageForMageCard(
   card: MageCardView,
   imageByName: Map<string, CardImage>
 ): string | undefined {
   const imageCard = imageCardForMageCard(card);
+  if (isFaceDownLikeCard(imageCard)) return undefined;
   let fallbackName: string | null = null;
   for (const name of mageCardImageLookupNames(imageCard)) {
     if (!fallbackName) fallbackName = name;
@@ -7744,6 +8395,22 @@ function plainMageText(value?: string | null): string {
     .trim();
 }
 
+function mageDisplayText(value?: string | null): string {
+  return (value ?? "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<(?!\s*\/?\s*i\s*>)[^>]+>/gi, "")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .trim();
+}
+
+function normalizePromptDisplayMessage(value?: string | null): string {
+  const plain = plainMageText(value);
+  const normalized = normalizePromptMessage(plain);
+  if (normalized !== plain) return normalized;
+  return mageDisplayText(value);
+}
+
 function normalizePromptMessage(message: string): string {
   if (/^play spells and abilities\.?$/i.test(message)) {
     return "You have priority.";
@@ -7754,7 +8421,20 @@ function normalizePromptMessage(message: string): string {
   return message;
 }
 
+function cardReferenceName(card: MageCardView): string {
+  const subject = imageCardForMageCard(card);
+  if (isFaceDownLikeCard(subject)) return faceDownKind(subject);
+  const name =
+    subject.displayName ||
+    subject.name ||
+    subject.displayFullName ||
+    subject.original?.name ||
+    "";
+  return cleanMageCardName(name) || "this card";
+}
+
 function cardName(card: MageCardView): string {
+  if (isFaceDownLikeCard(card)) return faceDownKind(card);
   if (isMageAbility(card)) {
     const source = abilitySourceCard(card);
     const sourceName = source ? cardName(source) : null;
@@ -7773,6 +8453,7 @@ function cardName(card: MageCardView): string {
 }
 
 function isLandCard(card: MageCardView): boolean {
+  if (isFaceDownLikeCard(card)) return false;
   return cardHasType(card, "land");
 }
 
@@ -7788,6 +8469,7 @@ function presentStat(value?: string | number | null): string | null {
 }
 
 function typeLine(card: MageCardView): string {
+  if (isFaceDownLikeCard(card)) return "Creature";
   const types = [
     ...(card.superTypes ?? []),
     ...(card.cardTypes ?? []),
@@ -7816,10 +8498,12 @@ function extractSubTypes(raw: unknown): string {
 }
 
 function manaCost(card: MageCardView): string {
+  if (isFaceDownLikeCard(card)) return "";
   return [...(card.manaCostLeftStr ?? []), ...(card.manaCostRightStr ?? [])].join(" ");
 }
 
 function powerToughness(card: MageCardView): string {
+  if (isFaceDownLikeCard(card)) return "2/2";
   if (cardHasType(card, "planeswalker")) {
     return presentStat(card.loyalty) ?? "";
   }
@@ -7848,7 +8532,7 @@ function optionsForChoice(prompt: MageGatewayEvent | null): PromptChoiceOption[]
       .filter(([value, label]) => typeof value === "string" && typeof label === "string")
       .map(([value, label]) => ({
         value,
-        label: plainMageText(label) || value,
+        label: mageDisplayText(label) || value,
         sendAsUuid: false,
       }));
   }
@@ -7858,7 +8542,7 @@ function optionsForChoice(prompt: MageGatewayEvent | null): PromptChoiceOption[]
       .filter((value) => typeof value === "string")
       .map((value) => ({
         value,
-        label: plainMageText(value),
+        label: mageDisplayText(value),
         sendAsUuid: false,
       }))
       .filter((option) => option.value.trim().length > 0);
@@ -7875,7 +8559,7 @@ function optionsForChoice(prompt: MageGatewayEvent | null): PromptChoiceOption[]
       )
       .map(([value, label]) => ({
         value,
-        label: plainMageText(label) || value,
+        label: mageDisplayText(label) || value,
         sendAsUuid: isUuid(value),
       }))
       .filter((option) => option.label.trim().length > 0);

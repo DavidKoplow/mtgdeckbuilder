@@ -308,6 +308,19 @@ a {
   border-radius: 0.5rem;
 }
 
+.playtest-block-target-pulse {
+  animation: playtest-block-target-pulse 900ms ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+.playtest-selected-block-target {
+  box-shadow:
+    0 0 0 3px rgba(37, 99, 235, 0.98),
+    0 0 0 6px rgba(255, 255, 255, 0.9),
+    0 0 20px rgba(37, 99, 235, 0.55);
+  border-radius: 0.5rem;
+}
+
 @keyframes playtest-possible-attacker-pulse {
   0%, 100% {
     box-shadow: 0 0 0 1px rgba(196, 61, 67, 0.35);
@@ -324,6 +337,23 @@ a {
   50% {
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.95), 0 0 16px rgba(37, 99, 235, 0.55);
   }
+}
+
+@keyframes playtest-block-target-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 0 3px rgba(37, 99, 235, 0.95),
+      0 0 18px rgba(37, 99, 235, 0.55);
+  }
+}
+
+.playtest-face-down-card {
+  background:
+    radial-gradient(circle at 24% 18%, rgba(255, 255, 255, 0.16), transparent 28%),
+    linear-gradient(145deg, #1f2937 0%, #111827 52%, #2f1f13 100%);
 }
 
 .playtest-combat-arrow {
@@ -369,6 +399,89 @@ a {
 
 .playtest-end-panel {
   animation: playtest-end-pop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes playtest-life-damage {
+  0% {
+    transform: scale(1);
+    background-color: #fff;
+    color: var(--text);
+    box-shadow: none;
+  }
+  18% {
+    transform: scale(1.08) translateX(-2px);
+    background-color: rgba(254, 226, 226, 1);
+    color: var(--danger);
+    box-shadow: 0 0 12px rgba(196, 61, 67, 0.55);
+  }
+  36% {
+    transform: scale(1.05) translateX(2px);
+  }
+  54% {
+    transform: scale(1.04) translateX(-1px);
+  }
+  100% {
+    transform: scale(1);
+    background-color: #fff;
+    color: var(--text);
+    box-shadow: none;
+  }
+}
+
+@keyframes playtest-life-heal {
+  0% {
+    transform: scale(1);
+    background-color: #fff;
+    color: var(--text);
+    box-shadow: none;
+  }
+  28% {
+    transform: scale(1.12);
+    background-color: rgba(209, 250, 229, 1);
+    color: #059669;
+    box-shadow: 0 0 12px rgba(52, 211, 153, 0.55);
+  }
+  100% {
+    transform: scale(1);
+    background-color: #fff;
+    color: var(--text);
+    box-shadow: none;
+  }
+}
+
+@keyframes playtest-life-delta {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -0.85rem);
+  }
+}
+
+.playtest-life-damage {
+  animation: playtest-life-damage 620ms ease-out;
+}
+
+.playtest-life-heal {
+  animation: playtest-life-heal 620ms ease-out;
+}
+
+.playtest-life-delta {
+  animation: playtest-life-delta 720ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playtest-life-damage,
+  .playtest-life-heal {
+    animation-duration: 0.01ms;
+  }
+
+  .playtest-life-delta {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 .mage-playtest-shell {
