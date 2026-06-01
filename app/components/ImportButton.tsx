@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { DeckEntry } from "../lib/types";
 import {
   parseDeckInput,
@@ -120,27 +121,18 @@ export function ImportButton({
     (preview?.sideboard.reduce((n, e) => n + e.quantity, 0) ?? 0) +
     (preview?.maybeboard.reduce((n, e) => n + e.quantity, 0) ?? 0);
 
-  return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        disabled={disabled}
-        title="Import deck"
-        aria-label="Import deck"
-        className="control flex items-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
-      >
-        <ImportIcon />
-        <span>Import</span>
-      </button>
-      {open && (
+  const dialog =
+    open && typeof document !== "undefined"
+      ? createPortal(
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
+          className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
           onClick={close}
         >
           <div
-            className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10"
+            className="flex max-h-[min(85dvh,44rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
+            aria-modal="true"
             aria-label="Import deck"
           >
             <div className="flex items-center justify-between border-b border-border bg-surface-raised px-4 py-3">
@@ -273,8 +265,24 @@ export function ImportButton({
               )}
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+        document.body
+      )
+      : null;
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        title="Import deck"
+        aria-label="Import deck"
+        className="control flex items-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface-raised disabled:hover:text-text-muted"
+      >
+        <ImportIcon />
+        <span>Import</span>
+      </button>
+      {dialog}
     </>
   );
 }

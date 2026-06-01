@@ -239,7 +239,7 @@ type OpponentDeckCandidate = {
   format: string;
   cardCount: number;
   sideboardCount: number;
-  deck?: Deck;
+  deck?: Deck | PublicDeck;
   officialSummary?: PublicDeckSummary;
 };
 
@@ -252,7 +252,6 @@ const STORED_MAGE_SESSION_PREFIX = "mtgdeckbuilder:mage-playtest:v1:";
 const STORED_MAGE_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_MAGE_OPPONENT_DECK_MODE: MageOpponentDeckMode = "current";
 const OPPONENT_DECK_SEARCH_LIMIT = 24;
-const OPPONENT_OFFICIAL_RANDOM_LIMIT = 80;
 const CONSTRUCTED_FORMAT_ORDER = [
   "standard",
   "pioneer",
@@ -866,25 +865,21 @@ export function MagePlaytest({
       convex.query(api.decks.getPublicDeck, { publicId }) as Promise<PublicDeck | null>,
     [convex]
   );
-  const getOfficialRandomOpponentDecks = useCallback(
-    async () => {
-      const decks: PublicDeckSummary[] = [];
-      const pageSize = OPPONENT_OFFICIAL_RANDOM_LIMIT;
-      for (let page = 1; page <= 80; page += 1) {
-        const pageResult = await convex.query(api.decks.searchPublicDeckPage, {
-          query: "",
-          limit: pageSize,
-          page,
-          source: "official" as const,
-        });
-        decks.push(...pageResult.decks);
-        if (!pageResult.hasNextPage || pageResult.decks.length < pageSize) {
-          break;
-        }
-      }
-
-      return decks;
-    },
+  const getRandomOfficialOpponentDeck = useCallback(
+    (gameMode: MageGameMode) =>
+      convex.query(api.decks.getRandomPublicDeckForFormat, {
+        format: gameMode,
+        source: "official" as const,
+        seed: Math.random(),
+      }) as Promise<PublicDeck | null>,
+    [convex]
+  );
+  const countOfficialOpponentDecks = useCallback(
+    (gameMode: MageGameMode) =>
+      convex.query(api.decks.countPublicDecksByFormat, {
+        format: gameMode,
+        source: "official" as const,
+      }) as Promise<number>,
     [convex]
   );
 
@@ -1253,7 +1248,8 @@ export function MagePlaytest({
       opponentDecks,
       deck.id,
       getPublicOpponentDeck,
-      getOfficialRandomOpponentDecks
+      getRandomOfficialOpponentDeck,
+      countOfficialOpponentDecks
     )
       .then((resolvedOpponent) => {
         if (!cancelled) setOpponentImageDeck(resolvedOpponent?.deck ?? null);
@@ -1267,7 +1263,8 @@ export function MagePlaytest({
     };
   }, [
     deck.id,
-    getOfficialRandomOpponentDecks,
+    countOfficialOpponentDecks,
+    getRandomOfficialOpponentDeck,
     getPublicOpponentDeck,
     opponentDecks,
     opponentDecksLoaded,
@@ -1396,9 +1393,7 @@ export function MagePlaytest({
 
   const startWithConfig = useCallback(
     async (inputConfig: MagePlaytestConfig) => {
-      const requestedConfig = normalizedMagePlaytestConfig(
-        rerollableMagePlaytestConfig(inputConfig)
-      );
+      const requestedConfig = normalizedMagePlaytestConfig(inputConfig);
       const requestedServer = mageServerOption(
         effectiveMageServerId(requestedConfig)
       );
@@ -1415,7 +1410,8 @@ export function MagePlaytest({
         opponentDecks,
         deck.id,
         getPublicOpponentDeck,
-        getOfficialRandomOpponentDecks
+        getRandomOfficialOpponentDeck,
+        countOfficialOpponentDecks
       );
       const opponentDeck = resolvedOpponent?.deck ?? null;
       const opponentDeckMode =
@@ -1484,7 +1480,8 @@ export function MagePlaytest({
     [
       deck.id,
       deck.name,
-      getOfficialRandomOpponentDecks,
+      countOfficialOpponentDecks,
+      getRandomOfficialOpponentDeck,
       getPublicOpponentDeck,
       notify,
       opponentDecks,
@@ -1945,7 +1942,6 @@ function PlaytestSetupDialog({
   onStart: (config: MagePlaytestConfig) => void;
   onClose?: () => void;
 }) {
-  const convex = useConvex();
   const initialOpponentType = initialConfig?.opponentType ?? "ai";
   const [opponentType, setOpponentType] = useState<MageOpponentType>(
     initialOpponentType
@@ -1991,57 +1987,15 @@ function PlaytestSetupDialog({
         }
       : "skip"
   );
-  const [officialRandomDecks, setOfficialRandomDecks] = useState<
-    PublicDeckSummary[]
-  >([]);
-  const [officialRandomDecksLoaded, setOfficialRandomDecksLoaded] = useState(
-    false
+  const officialRandomCount = useQuery(
+    api.decks.countPublicDecksByFormat,
+    includeOfficialOpponentDecks
+      ? {
+          format: gameMode,
+          source: "official" as const,
+        }
+      : "skip"
   );
-
-  const fetchOfficialRandomDecks = useCallback(async () => {
-    const decks: PublicDeckSummary[] = [];
-    const pageSize = OPPONENT_OFFICIAL_RANDOM_LIMIT;
-    for (let page = 1; page <= 80; page += 1) {
-      const pageResult = await convex.query(api.decks.searchPublicDeckPage, {
-        query: "",
-        limit: pageSize,
-        page,
-        source: "official" as const,
-      });
-      decks.push(...pageResult.decks);
-      if (!pageResult.hasNextPage || pageResult.decks.length < pageSize) {
-        break;
-      }
-    }
-
-    return decks;
-  }, [convex]);
-
-  useEffect(() => {
-    if (!includeOfficialOpponentDecks) {
-      setOfficialRandomDecks([]);
-      setOfficialRandomDecksLoaded(true);
-      return;
-    }
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        const decks = await fetchOfficialRandomDecks();
-        if (cancelled) return;
-        setOfficialRandomDecks(decks);
-        setOfficialRandomDecksLoaded(true);
-      } catch {
-        if (cancelled) return;
-        setOfficialRandomDecks([]);
-        setOfficialRandomDecksLoaded(true);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [includeOfficialOpponentDecks, fetchOfficialRandomDecks]);
 
   const availableOpponentDecks = useMemo(
     () => opponentDecks.filter((candidate) => deckCardCount(candidate) > 0),
@@ -2111,30 +2065,22 @@ function PlaytestSetupDialog({
     selectedOpponentCandidate ?? fallbackSelectedOpponentCandidate;
   const effectiveSelectedOpponentDeckKey =
     effectiveSelectedOpponentCandidate?.key ?? selectedOpponentDeckKey;
-  const officialRandomCandidates = useMemo(
-    () =>
-      includeOfficialOpponentDecks
-        ? officialRandomDecks
-            .map(officialOpponentDeckCandidate)
-            .filter((candidate) => isCompatibleOpponentDeck(candidate, gameMode))
-        : [],
-    [gameMode, includeOfficialOpponentDecks, officialRandomDecks]
-  );
-  const allRandomOpponentCandidates = useMemo(
-    () => [...compatibleSavedOpponentCandidates, ...officialRandomCandidates],
-    [compatibleSavedOpponentCandidates, officialRandomCandidates]
-  );
   const randomOpponentCandidates = useMemo(
-    () => randomOpponentDeckCandidates(allRandomOpponentCandidates, deck.id),
-    [allRandomOpponentCandidates, deck.id]
+    () => randomOpponentDeckCandidates(compatibleSavedOpponentCandidates, deck.id),
+    [compatibleSavedOpponentCandidates, deck.id]
   );
-  const randomCandidateCount = randomOpponentCandidates.length;
+  const officialRandomCandidateCount =
+    includeOfficialOpponentDecks && officialRandomCount !== undefined
+      ? officialRandomCount
+      : 0;
+  const randomCandidateCount =
+    randomOpponentCandidates.length + officialRandomCandidateCount;
   const officialSearchLoaded =
     !includeOfficialOpponentDecks || officialSearchResults !== undefined;
   const searchDecksLoaded = opponentDecksLoaded && officialSearchLoaded;
   const randomDecksLoaded =
     opponentDecksLoaded &&
-    (includeOfficialOpponentDecks ? officialRandomDecksLoaded : true);
+    (!includeOfficialOpponentDecks || officialRandomCount !== undefined);
   const effectiveServerId = effectiveMageServerId({
     opponentType,
     mageServerId,
@@ -2473,9 +2419,9 @@ function PlaytestSetupDialog({
                       <input
                         type="checkbox"
                         checked={includeOfficialOpponentDecks}
-                        onChange={(event) =>
-                          setIncludeOfficialOpponentDecks(event.target.checked)
-                        }
+                        onChange={(event) => {
+                          setIncludeOfficialOpponentDecks(event.target.checked);
+                        }}
                         className="h-4 w-4 accent-[color:var(--accent)]"
                       />
                     </label>
@@ -2827,6 +2773,7 @@ function savedOpponentDeckCandidate(deck: Deck): OpponentDeckCandidate {
 function officialOpponentDeckCandidate(
   deck: PublicDeckSummary | PublicDeck
 ): OpponentDeckCandidate {
+  const fullDeck = "entries" in deck ? deck : undefined;
   return {
     key: officialCandidateKey(deck.publicId),
     source: "official",
@@ -2836,6 +2783,7 @@ function officialOpponentDeckCandidate(
     format: deck.format,
     cardCount: deck.cardCount,
     sideboardCount: deck.sideboardCount,
+    deck: fullDeck,
     officialSummary: "viewCount" in deck ? deck : undefined,
   };
 }
@@ -2870,6 +2818,9 @@ function isCompatibleOpponentDeck(
   deck: OpponentDeckCandidate,
   gameMode: MageGameMode
 ): boolean {
+  const validFormats = deck.deck?.validFormats ?? deck.officialSummary?.validFormats;
+  if (validFormats) return validFormats.includes(gameMode);
+
   const cardCount = cleanCount(deck.cardCount);
   const sideboardCount = cleanCount(deck.sideboardCount);
   if (gameMode === "freeform") return cardCount > 0;
@@ -2941,7 +2892,8 @@ async function resolveConfiguredOpponentDeck(
   decks: Deck[],
   currentDeckId: string,
   getPublicDeck: (publicId: string) => Promise<PublicDeck | null>,
-  getOfficialRandomDecks?: () => Promise<PublicDeckSummary[]>
+  getRandomOfficialDeck?: (gameMode: MageGameMode) => Promise<PublicDeck | null>,
+  countOfficialDecks?: (gameMode: MageGameMode) => Promise<number>
 ): Promise<ResolvedOpponentDeck | null> {
   if (config.opponentType !== "ai") return null;
   const mode = config.opponentDeckMode ?? DEFAULT_MAGE_OPPONENT_DECK_MODE;
@@ -2952,22 +2904,42 @@ async function resolveConfiguredOpponentDeck(
     !config.opponentDeckId &&
     !config.opponentDeckPublicId
   ) {
-    const savedCandidates = decks
-      .map(savedOpponentDeckCandidate)
-      .filter((candidate) => isCompatibleOpponentDeck(candidate, config.gameMode));
-    const officialCandidates =
-      config.includeOfficialOpponentDecks && getOfficialRandomDecks
-        ? (await getOfficialRandomDecks())
-            .map(officialOpponentDeckCandidate)
-            .filter((candidate) =>
-              isCompatibleOpponentDeck(candidate, config.gameMode)
-            )
-        : [];
-    const candidates = randomOpponentDeckCandidates(
-      [...savedCandidates, ...officialCandidates],
+    const savedCandidates = randomOpponentDeckCandidates(
+      decks
+        .map(savedOpponentDeckCandidate)
+        .filter((candidate) =>
+          isCompatibleOpponentDeck(candidate, config.gameMode)
+        ),
       currentDeckId
     );
-    const candidate = randomOpponentCandidate(candidates);
+    const officialCount =
+      config.includeOfficialOpponentDecks &&
+      getRandomOfficialDeck &&
+      countOfficialDecks
+        ? await countOfficialDecks(config.gameMode)
+        : 0;
+    const totalCandidates = savedCandidates.length + officialCount;
+    if (totalCandidates === 0) return null;
+
+    const randomIndex = Math.floor(Math.random() * totalCandidates);
+    if (randomIndex >= savedCandidates.length && getRandomOfficialDeck) {
+      const officialDeck = await getRandomOfficialDeck(config.gameMode);
+      const officialCandidate = officialDeck
+        ? officialOpponentDeckCandidate(officialDeck)
+        : null;
+      if (
+        officialCandidate &&
+        isCompatibleOpponentDeck(officialCandidate, config.gameMode)
+      ) {
+        return await resolveOpponentDeckCandidate(
+          officialCandidate,
+          decks,
+          getPublicDeck
+        );
+      }
+    }
+
+    const candidate = randomOpponentCandidate(savedCandidates);
     return candidate
       ? await resolveOpponentDeckCandidate(candidate, decks, getPublicDeck)
       : null;
@@ -3005,8 +2977,11 @@ async function resolveOpponentDeckCandidate(
   getPublicDeck: (publicId: string) => Promise<PublicDeck | null>
 ): Promise<ResolvedOpponentDeck | null> {
   if (candidate.source === "official") {
-    if (!candidate.publicId) return null;
-    const deck = await getPublicDeck(candidate.publicId);
+    const cachedPublicDeck =
+      candidate.deck && "authorName" in candidate.deck ? candidate.deck : null;
+    const deck =
+      cachedPublicDeck ??
+      (candidate.publicId ? await getPublicDeck(candidate.publicId) : null);
     return deck ? { deck, candidate: officialOpponentDeckCandidate(deck) } : null;
   }
 
@@ -6114,12 +6089,27 @@ function PromptPanelContent({
   const abilityChoices = Object.entries(prompt.choices ?? {});
   const isCardChoice =
     method === "GAME_SELECT" || method === "GAME_TARGET";
-  const promptMessage =
+  const basePromptMessage =
     normalizePromptDisplayMessage(prompt.message || prompt.choice?.message) ||
     "Choose an action";
+  const promptMessage = normalizeSelectionPromptDisplayMessage(
+    basePromptMessage,
+    prompt
+  );
   const promptSubMessage = mageDisplayText(prompt.choice?.subMessage);
+  const isPrioritySelect =
+    method === "GAME_SELECT" && isPriorityMessage(plainMageText(prompt.message));
+  const targetSelectionRequired = method === "GAME_TARGET" && prompt.flag === true;
   const yesLabel = optionText(prompt.options, "UI.left.btn.text", "Yes");
   const noLabel = optionText(prompt.options, "UI.right.btn.text", "No");
+  const selectRightLabel = isPrioritySelect
+    ? "Pass Priority"
+    : optionText(prompt.options, "UI.right.btn.text", "Cancel");
+  const targetRightLabel = optionText(
+    prompt.options,
+    "UI.right.btn.text",
+    "Cancel"
+  );
   const specialLabel = optionText(
     prompt.options,
     "specialButton",
@@ -6259,7 +6249,7 @@ function PromptPanelContent({
             </>
           )}
 
-          {(method === "GAME_SELECT" || method === "GAME_TARGET") && (
+          {method === "GAME_SELECT" && (
             <>
               {selectablePlayers.map((player) => (
                 <ActionButton
@@ -6269,10 +6259,27 @@ function PromptPanelContent({
                   {player.name ?? "Player"}
                 </ActionButton>
               ))}
-              <ActionButton onClick={session.passPriority}>Pass Priority</ActionButton>
               <ActionButton onClick={() => session.chooseBoolean(false)}>
-                Cancel
+                {selectRightLabel}
               </ActionButton>
+            </>
+          )}
+
+          {method === "GAME_TARGET" && (
+            <>
+              {selectablePlayers.map((player) => (
+                <ActionButton
+                  key={player.playerId ?? player.name}
+                  onClick={() => player.playerId && onChoosePlayer(player.playerId)}
+                >
+                  {player.name ?? "Player"}
+                </ActionButton>
+              ))}
+              {!targetSelectionRequired && (
+                <ActionButton onClick={() => session.chooseBoolean(false)}>
+                  {targetRightLabel}
+                </ActionButton>
+              )}
             </>
           )}
 
@@ -8409,6 +8416,26 @@ function normalizePromptDisplayMessage(value?: string | null): string {
   const normalized = normalizePromptMessage(plain);
   if (normalized !== plain) return normalized;
   return mageDisplayText(value);
+}
+
+function normalizeSelectionPromptDisplayMessage(
+  message: string,
+  prompt: MageGatewayEvent | null
+): string {
+  const method = prompt?.callbackMethod ?? prompt?.type;
+  if (method !== "GAME_SELECT" && method !== "GAME_TARGET") return message;
+  if (!selectionCanFinishBeforeMax(prompt)) return message;
+  if (/\bmin\s+\d+\b/i.test(message) || /\bup to\b/i.test(message)) {
+    return message;
+  }
+  return message.replace(
+    /\(selected\s+(\d+)\s+of\s+(\d+)\)/i,
+    "(selected $1, up to $2)"
+  );
+}
+
+function selectionCanFinishBeforeMax(prompt: MageGatewayEvent | null): boolean {
+  return /^done$/i.test(optionText(prompt?.options, "UI.right.btn.text", ""));
 }
 
 function normalizePromptMessage(message: string): string {

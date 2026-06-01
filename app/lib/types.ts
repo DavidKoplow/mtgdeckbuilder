@@ -111,6 +111,7 @@ export type Deck = {
   cardCount: number;
   sideboardCount: number;
   maybeboardCount: number;
+  validFormats?: string[];
   createdAt: number;
   updatedAt: number;
   entries: DeckEntry[];
@@ -142,6 +143,7 @@ export type PublicDeckSummary = {
   cardCount: number;
   sideboardCount: number;
   maybeboardCount: number;
+  validFormats?: string[];
   createdAt: number;
   updatedAt: number;
   authorName: string;

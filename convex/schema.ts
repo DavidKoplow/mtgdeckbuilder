@@ -29,6 +29,7 @@ export default defineSchema({
     isPublic: v.optional(v.boolean()),
     name: v.string(),
     format: v.string(),
+    validFormats: v.optional(v.array(v.string())),
     cards: v.optional(v.array(deckCardRef)),
     sideboardCards: v.optional(v.array(deckCardRef)),
     maybeboardCards: v.optional(v.array(deckCardRef)),
@@ -64,6 +65,18 @@ export default defineSchema({
     .index("by_public_id", ["publicId"])
     .index("by_source_updated", ["sourceType", "updatedAt"])
     .index("by_updated", ["updatedAt"]),
+  publicDeckFormats: defineTable({
+    publicId: v.string(),
+    userId: v.string(),
+    deckId: v.string(),
+    format: v.string(),
+    source: v.union(v.literal("community"), v.literal("official")),
+    randomKey: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_public_id", ["publicId"])
+    .index("by_format_source_random", ["format", "source", "randomKey"])
+    .index("by_format_source_updated", ["format", "source", "updatedAt"]),
   cards: defineTable({
     cardKey: v.number(),
     scryfallId: v.string(),

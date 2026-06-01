@@ -12,6 +12,52 @@ const PUBLIC_CARD_PREVIEW_LIMIT = 8;
 const PUBLIC_CARD_MATCH_LIMIT = 6;
 const OFFICIAL_MTGJSON_USER_ID = "official:mtgjson";
 const OFFICIAL_MTGJSON_SOURCE_TYPE = "mtgjson";
+const CONSTRUCTED_FORMAT_ORDER = [
+  "standard",
+  "pioneer",
+  "modern",
+  "legacy",
+  "vintage",
+] as const;
+const MAGE_GAME_FORMATS = [
+  "commander",
+  ...CONSTRUCTED_FORMAT_ORDER,
+  "pauper",
+  "freeform",
+] as const;
+const BASIC_LANDS = new Set(
+  [
+    "Plains",
+    "Island",
+    "Swamp",
+    "Mountain",
+    "Forest",
+    "Wastes",
+    "Snow-Covered Plains",
+    "Snow-Covered Island",
+    "Snow-Covered Swamp",
+    "Snow-Covered Mountain",
+    "Snow-Covered Forest",
+    "Snow-Covered Wastes",
+  ].map(cardNameKey)
+);
+const COPY_LIMITS = new Map(
+  [
+    ["Relentless Rats", Number.POSITIVE_INFINITY],
+    ["Shadowborn Apostle", Number.POSITIVE_INFINITY],
+    ["Rat Colony", Number.POSITIVE_INFINITY],
+    ["Persistent Petitioners", Number.POSITIVE_INFINITY],
+    ["Dragon's Approach", Number.POSITIVE_INFINITY],
+    ["Slime Against Humanity", Number.POSITIVE_INFINITY],
+    ["Templar Knight", Number.POSITIVE_INFINITY],
+    ["Hare Apparent", Number.POSITIVE_INFINITY],
+    ["Tempest Hawk", Number.POSITIVE_INFINITY],
+    ["Cid, Timeless Artificer", Number.POSITIVE_INFINITY],
+    ["Seven Dwarves", 7],
+    ["Nazgul", 9],
+    ["Once More with Feeling", 1],
+  ].map(([name, limit]) => [cardNameKey(String(name)), Number(limit)] as const)
+);
 
 const deckEntry = v.object({
   cardId: v.string(),
@@ -41,6 +87,7 @@ const deckSummary = v.object({
   cardCount: v.number(),
   sideboardCount: v.number(),
   maybeboardCount: v.number(),
+  validFormats: v.array(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -54,6 +101,7 @@ const deck = v.object({
   cardCount: v.number(),
   sideboardCount: v.number(),
   maybeboardCount: v.number(),
+  validFormats: v.array(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
   entries: v.array(deckEntry),
@@ -70,6 +118,7 @@ const deckInput = v.object({
   cardCount: v.number(),
   sideboardCount: v.number(),
   maybeboardCount: v.optional(v.number()),
+  validFormats: v.optional(v.array(v.string())),
   createdAt: v.number(),
   updatedAt: v.number(),
   entries: v.array(deckEntry),
@@ -113,7 +162,6 @@ const publicDeckSource = v.union(
   v.literal("official"),
   v.literal("all")
 );
-
 const publicDeckSummary = v.object({
   publicId: v.string(),
   ownedDeckId: v.optional(v.string()),
@@ -122,6 +170,7 @@ const publicDeckSummary = v.object({
   cardCount: v.number(),
   sideboardCount: v.number(),
   maybeboardCount: v.number(),
+  validFormats: v.array(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
   authorName: v.string(),
@@ -162,6 +211,7 @@ const publicDeck = v.object({
   cardCount: v.number(),
   sideboardCount: v.number(),
   maybeboardCount: v.number(),
+  validFormats: v.array(v.string()),
   createdAt: v.number(),
   updatedAt: v.number(),
   entries: v.array(deckEntry),
@@ -207,6 +257,7 @@ type Deck = {
   cardCount: number;
   sideboardCount: number;
   maybeboardCount: number;
+  validFormats: string[];
   createdAt: number;
   updatedAt: number;
   entries: DeckEntry[];
@@ -222,6 +273,7 @@ type PublicDeckSummary = {
   cardCount: number;
   sideboardCount: number;
   maybeboardCount: number;
+  validFormats: string[];
   createdAt: number;
   updatedAt: number;
   authorName: string;
@@ -317,11 +369,19 @@ type DeckCardRef = {
 
 type DeckZone = "main" | "sideboard" | "maybeboard";
 type PublicDeckSource = "community" | "official" | "all";
+type PublicDeckFormatSource = "community" | "official";
 
 type DeckRefs = {
   cards: DeckCardRef[];
   sideboardCards: DeckCardRef[];
   maybeboardCards: DeckCardRef[];
+};
+
+type DeckFormatEntry = {
+  name: string;
+  quantity: number;
+  isCommander?: boolean;
+  legalities?: Record<string, string>;
 };
 
 const deckZone = v.union(
@@ -358,6 +418,7 @@ export const listDecks = query({
             deckDoc.sideboardCount ?? countCards(sideboardCards),
           maybeboardCount:
             deckDoc.maybeboardCount ?? countCards(maybeboardCards),
+          validFormats: validFormatsForDeckDoc(deckDoc),
           createdAt: deckDoc.createdAt,
           updatedAt: deckDoc.updatedAt,
         };
@@ -394,6 +455,7 @@ export const get = query({
       cardCount: deckDoc.cardCount ?? countCards(cards),
       sideboardCount: deckDoc.sideboardCount ?? countCards(sideboardCards),
       maybeboardCount: deckDoc.maybeboardCount ?? countCards(maybeboardCards),
+      validFormats: validFormatsForDeckDoc(deckDoc),
       createdAt: deckDoc.createdAt,
       updatedAt: deckDoc.updatedAt,
       entries,
@@ -434,6 +496,7 @@ export const listDecksFull = query({
             deckDoc.sideboardCount ?? countCards(sideboardCards),
           maybeboardCount:
             deckDoc.maybeboardCount ?? countCards(maybeboardCards),
+          validFormats: validFormatsForDeckDoc(deckDoc),
           createdAt: deckDoc.createdAt,
           updatedAt: deckDoc.updatedAt,
           entries,
@@ -612,36 +675,57 @@ export const getPublicDeck = query({
     if (!deckDoc || !isDeckPublic(deckDoc)) return null;
 
     const viewerUserId = await getUserId(ctx);
-    const publicId = publicIdForDeck(deckDoc);
-    const cards = deckCardRefs(deckDoc);
-    const sideboardCards = deckSideboardRefs(deckDoc);
-    const maybeboardCards = deckMaybeboardRefs(deckDoc);
-    const entries = await hydrateEntries(ctx, cards);
-    const sideboard = await hydrateEntries(ctx, sideboardCards);
-    const maybeboard = await hydrateEntries(ctx, maybeboardCards);
+    return await publicDeckFromDoc(ctx, deckDoc, viewerUserId);
+  },
+});
 
-    return {
-      id: temporaryPublicDeckId(publicId),
-      publicId,
-      ...(viewerUserId === deckDoc.userId
-        ? { ownedDeckId: deckDoc.deckId }
-        : {}),
-      isPublic: true,
-      name: deckDoc.name,
-      format: deckDoc.format,
-      cardCount: deckDoc.cardCount ?? countCards(cards),
-      sideboardCount:
-        deckDoc.sideboardCount ?? countCards(sideboardCards),
-      maybeboardCount:
-        deckDoc.maybeboardCount ?? countCards(maybeboardCards),
-      createdAt: deckDoc.createdAt,
-      updatedAt: deckDoc.updatedAt,
-      entries,
-      sideboard,
-      maybeboard,
-      authorName: authorNameForDeck(deckDoc),
-      ...publicSourceMetadata(deckDoc),
-    };
+export const countPublicDecksByFormat = query({
+  args: {
+    format: v.string(),
+    source: v.optional(publicDeckSource),
+  },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const format = normalizeGameFormat(args.format);
+    if (!format) return 0;
+    let count = 0;
+    for (const source of publicDeckFormatSources(args.source ?? "all")) {
+      for await (const row of ctx.db
+        .query("publicDeckFormats")
+        .withIndex("by_format_source_random", (q) =>
+          q.eq("format", format).eq("source", source)
+        )) {
+        void row;
+        count += 1;
+      }
+    }
+    return count;
+  },
+});
+
+export const getRandomPublicDeckForFormat = query({
+  args: {
+    format: v.string(),
+    source: v.optional(publicDeckSource),
+    seed: v.number(),
+  },
+  returns: v.union(v.null(), publicDeck),
+  handler: async (ctx, args): Promise<PublicDeck | null> => {
+    const format = normalizeGameFormat(args.format);
+    if (!format) return null;
+    const source = args.source ?? "all";
+    const seed = normalizedRandomSeed(args.seed);
+    const sources = publicDeckFormatSources(source);
+    const selectedRow =
+      sources.length === 1
+        ? await randomPublicDeckFormatRow(ctx, format, sources[0]!, seed)
+        : await randomPublicDeckFormatRowFromSources(ctx, format, sources, seed);
+    if (!selectedRow) return null;
+
+    const deckDoc = await getPublicDeckDoc(ctx, selectedRow.publicId);
+    if (!deckDoc || !isDeckPublic(deckDoc)) return null;
+    const viewerUserId = await getUserId(ctx);
+    return await publicDeckFromDoc(ctx, deckDoc, viewerUserId);
   },
 });
 
@@ -691,6 +775,7 @@ export const create = mutation({
       isPublic,
       name: args.name.trim() || "Untitled Deck",
       format: "commander",
+      validFormats: [],
       cards: [],
       sideboardCards: [],
       maybeboardCards: [],
@@ -736,11 +821,19 @@ export const setFormat = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const deckDoc = await requireDeckDoc(ctx, userId, args.deckId);
+    const validFormats = await validFormatsForDeckRefs(ctx, {
+      cards: deckCardRefs(deckDoc),
+      sideboardCards: deckSideboardRefs(deckDoc),
+      maybeboardCards: deckMaybeboardRefs(deckDoc),
+    });
+    const updatedAt = Date.now();
 
     await ctx.db.patch(deckDoc._id, {
       format: args.format,
-      updatedAt: Date.now(),
+      validFormats,
+      updatedAt,
     });
+    await replacePublicDeckFormatRows(ctx, deckDoc, validFormats, updatedAt);
 
     return null;
   },
@@ -756,6 +849,7 @@ export const deleteDeck = mutation({
     const deckDoc = await getDeckDoc(ctx, userId, args.deckId);
     if (!deckDoc) return null;
 
+    await deletePublicDeckFormatRows(ctx, publicIdForDeck(deckDoc));
     await ctx.db.delete(deckDoc._id);
 
     return null;
@@ -775,12 +869,25 @@ export const setPublic = mutation({
     const userId = await requireUserId(ctx);
     const deckDoc = await requireDeckDoc(ctx, userId, args.deckId);
     const publicId = publicIdForDeck(deckDoc);
+    const validFormats = await validFormatsForDeckRefs(ctx, {
+      cards: deckCardRefs(deckDoc),
+      sideboardCards: deckSideboardRefs(deckDoc),
+      maybeboardCards: deckMaybeboardRefs(deckDoc),
+    });
+    const updatedAt = Date.now();
 
     await ctx.db.patch(deckDoc._id, {
       isPublic: args.isPublic,
       publicId,
-      updatedAt: Date.now(),
+      validFormats,
+      updatedAt,
     });
+    await replacePublicDeckFormatRows(
+      ctx,
+      { ...deckDoc, publicId, isPublic: args.isPublic },
+      validFormats,
+      updatedAt
+    );
 
     return { isPublic: args.isPublic, publicId };
   },
@@ -1077,19 +1184,29 @@ export const replaceDeck = mutation({
       sideboardCards: normalizedSideboardCards,
       maybeboardCards: normalizedMaybeboardCards,
     });
+    const cardCount = countCards(normalizedCards);
+    const sideboardCount = countCards(normalizedSideboardCards);
+    const validFormats = await validFormatsForDeckRefs(ctx, {
+      cards: normalizedCards,
+      sideboardCards: normalizedSideboardCards,
+      maybeboardCards: normalizedMaybeboardCards,
+    });
+    const updatedAt = Date.now();
 
     await ctx.db.patch(deckDoc._id, {
       name: args.deck.name,
       format: args.deck.format,
+      validFormats,
       cards: normalizedCards,
       sideboardCards: normalizedSideboardCards,
       maybeboardCards: normalizedMaybeboardCards,
       ...cardMetadata,
-      cardCount: countCards(normalizedCards),
-      sideboardCount: countCards(normalizedSideboardCards),
+      cardCount,
+      sideboardCount,
       maybeboardCount: countCards(normalizedMaybeboardCards),
-      updatedAt: Date.now(),
+      updatedAt,
     });
+    await replacePublicDeckFormatRows(ctx, deckDoc, validFormats, updatedAt);
 
     return null;
   },
@@ -1180,18 +1297,22 @@ export const importOfficialDeckBatch = mutation({
         input.sourceUpdatedAt ??
         now;
       const updatedAt = input.sourceUpdatedAt ?? now;
+      const cardCount = countCards(cards);
+      const sideboardCount = countCards(sideboardCards);
+      const validFormats = validFormatsForDeckEntries(entries, sideboard);
       const deckDoc = {
         publicId,
         isPublic: true,
         name: input.name.trim() || input.fileName,
         format: input.format,
+        validFormats,
         cards,
         sideboardCards,
         maybeboardCards,
         ...cardMetadata,
         ...displayMetadata,
-        cardCount: countCards(cards),
-        sideboardCount: countCards(sideboardCards),
+        cardCount,
+        sideboardCount,
         maybeboardCount: 0,
         ...officialMtgjsonMetadata(input),
         createdAt,
@@ -1208,10 +1329,23 @@ export const importOfficialDeckBatch = mutation({
           ...deckDoc,
         });
       }
+      await replacePublicDeckFormatRows(
+        ctx,
+        {
+          userId: OFFICIAL_MTGJSON_USER_ID,
+          deckId,
+          publicId,
+          isPublic: true,
+          sourceType: OFFICIAL_MTGJSON_SOURCE_TYPE,
+          updatedAt,
+        },
+        validFormats,
+        updatedAt
+      );
 
       imported += 1;
-      cardsTotal += countCards(cards);
-      sideboardTotal += countCards(sideboardCards);
+      cardsTotal += cardCount;
+      sideboardTotal += sideboardCount;
     }
 
     return {
@@ -1247,11 +1381,63 @@ export const deleteStaleOfficialDecks = mutation({
 
     for (const deckDoc of deckDocs) {
       if (activeDeckIds.has(deckDoc.deckId)) continue;
+      await deletePublicDeckFormatRows(ctx, publicIdForDeck(deckDoc));
       await ctx.db.delete(deckDoc._id);
       deleted += 1;
     }
 
     return { deleted };
+  },
+});
+
+export const backfillDeckValidFormats = mutation({
+  args: {
+    importToken: v.string(),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    limit: v.optional(v.number()),
+  },
+  returns: v.object({
+    scanned: v.number(),
+    updated: v.number(),
+    cursor: v.union(v.string(), v.null()),
+    done: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    requireMtgjsonImportToken(args.importToken);
+
+    const page = await ctx.db
+      .query("userDecks")
+      .withIndex("by_updated")
+      .paginate({
+        numItems: clampBackfillLimit(args.limit),
+        cursor: args.cursor ?? null,
+      });
+    let updated = 0;
+
+    for (const deckDoc of page.page) {
+      const validFormats = await validFormatsForDeckRefs(ctx, {
+        cards: deckCardRefs(deckDoc),
+        sideboardCards: deckSideboardRefs(deckDoc),
+        maybeboardCards: deckMaybeboardRefs(deckDoc),
+      });
+      if (!sameStringArray(validFormatsForDeckDoc(deckDoc), validFormats)) {
+        await ctx.db.patch(deckDoc._id, { validFormats });
+        updated += 1;
+      }
+      await replacePublicDeckFormatRows(
+        ctx,
+        deckDoc,
+        validFormats,
+        deckDoc.updatedAt
+      );
+    }
+
+    return {
+      scanned: page.page.length,
+      updated,
+      cursor: page.isDone ? null : page.continueCursor,
+      done: page.isDone,
+    };
   },
 });
 
@@ -1362,6 +1548,314 @@ function deckMatchesPublicSource(
   return source === "official" ? isOfficialDeck(deckDoc) : !isOfficialDeck(deckDoc);
 }
 
+function validFormatsForDeckDoc(deckDoc: Doc<"userDecks">): string[] {
+  return normalizedValidFormats(deckDoc.validFormats ?? []);
+}
+
+async function validFormatsForDeckRefs(
+  ctx: QueryCtx | MutationCtx,
+  refs: DeckRefs
+): Promise<string[]> {
+  const main = await deckFormatEntriesForRefs(ctx, refs.cards);
+  const sideboard = await deckFormatEntriesForRefs(ctx, refs.sideboardCards);
+  const maybeboard = await deckFormatEntriesForRefs(ctx, refs.maybeboardCards);
+  return validFormatsForDeckEntries(main, sideboard, maybeboard);
+}
+
+async function deckFormatEntriesForRefs(
+  ctx: QueryCtx | MutationCtx,
+  refs: DeckCardRef[]
+): Promise<DeckFormatEntry[]> {
+  const entries: DeckFormatEntry[] = [];
+  for (const ref of refs) {
+    const cardDoc = await getCardByKey(ctx, ref.cardKey);
+    if (!cardDoc) continue;
+    entries.push({
+      name: cardDoc.name,
+      quantity: ref.quantity,
+      isCommander: ref.isCommander,
+      legalities: cardDoc.legalities,
+    });
+  }
+  return entries;
+}
+
+function validFormatsForDeckEntries(
+  mainEntries: DeckFormatEntry[],
+  sideboardEntries: DeckFormatEntry[] = [],
+  maybeboardEntries: DeckFormatEntry[] = []
+): string[] {
+  const main = activeFormatEntries(mainEntries);
+  const sideboard = activeFormatEntries(sideboardEntries);
+  const maybeboard = activeFormatEntries(maybeboardEntries);
+  const valid = new Set<string>();
+
+  if (countFormatEntries(main) > 0) valid.add("freeform");
+  if (isCommanderFormatValid(main, sideboard, maybeboard)) {
+    valid.add("commander");
+  }
+  for (const format of CONSTRUCTED_FORMAT_ORDER) {
+    if (isConstructedFormatValid(main, sideboard, format)) {
+      valid.add(format);
+    }
+  }
+  if (isConstructedFormatValid(main, sideboard, "pauper")) {
+    valid.add("pauper");
+  }
+
+  return MAGE_GAME_FORMATS.filter((candidate) => valid.has(candidate));
+}
+
+function activeFormatEntries(entries: DeckFormatEntry[]): DeckFormatEntry[] {
+  return entries.filter((entry) => entry.quantity > 0);
+}
+
+function countFormatEntries(entries: DeckFormatEntry[]) {
+  return entries.reduce((total, entry) => total + entry.quantity, 0);
+}
+
+function isCommanderFormatValid(
+  main: DeckFormatEntry[],
+  sideboard: DeckFormatEntry[],
+  maybeboard: DeckFormatEntry[]
+) {
+  if (countFormatEntries(main) !== 100) return false;
+  if (countFormatEntries(sideboard) > 0 || countFormatEntries(maybeboard) > 0) {
+    return false;
+  }
+  const commanderCount = main.reduce(
+    (total, entry) => total + (entry.isCommander ? entry.quantity : 0),
+    0
+  );
+  if (commanderCount < 1 || commanderCount > 2) return false;
+  return (
+    entriesLegalInFormat(main, "commander") &&
+    copyCountsValidForFormat(main, "commander")
+  );
+}
+
+function isConstructedFormatValid(
+  main: DeckFormatEntry[],
+  sideboard: DeckFormatEntry[],
+  format: string
+) {
+  if (countFormatEntries(main) < 60) return false;
+  if (countFormatEntries(sideboard) > 15) return false;
+  const active = [...main, ...sideboard];
+  return (
+    entriesLegalInFormat(active, format) &&
+    copyCountsValidForFormat(active, format)
+  );
+}
+
+function entriesLegalInFormat(entries: DeckFormatEntry[], format: string) {
+  return entries.every((entry) => entryLegalInFormat(entry, format));
+}
+
+function entryLegalInFormat(entry: DeckFormatEntry, format: string) {
+  const legality = entry.legalities?.[format]?.trim().toLowerCase();
+  if (format === "vintage" && legality === "restricted") return true;
+  return legality === "legal";
+}
+
+function copyCountsValidForFormat(entries: DeckFormatEntry[], format: string) {
+  const counts = new Map<string, number>();
+  const entriesByName = new Map<string, DeckFormatEntry[]>();
+  for (const entry of entries) {
+    const key = cardNameKey(entry.name);
+    counts.set(key, (counts.get(key) ?? 0) + entry.quantity);
+    const namedEntries = entriesByName.get(key) ?? [];
+    namedEntries.push(entry);
+    entriesByName.set(key, namedEntries);
+  }
+
+  for (const [key, count] of counts) {
+    const namedEntries = entriesByName.get(key) ?? [];
+    const limit = maxCopiesForFormat(key, namedEntries, format);
+    if (count > limit) return false;
+  }
+  return true;
+}
+
+function maxCopiesForFormat(
+  cardName: string,
+  entries: DeckFormatEntry[],
+  format: string
+) {
+  if (BASIC_LANDS.has(cardName)) return Number.POSITIVE_INFINITY;
+  const override = COPY_LIMITS.get(cardName);
+  if (override !== undefined) return override;
+  if (
+    format === "vintage" &&
+    entries.some(
+      (entry) => entry.legalities?.vintage?.trim().toLowerCase() === "restricted"
+    )
+  ) {
+    return 1;
+  }
+  return format === "commander" ? 1 : 4;
+}
+
+function normalizedValidFormats(formats: string[]): string[] {
+  const valid = new Set(
+    formats.map(normalizeGameFormat).filter((format) => format.length > 0)
+  );
+  return MAGE_GAME_FORMATS.filter((format) => valid.has(format));
+}
+
+function normalizeGameFormat(format: string): string {
+  const normalized = format.trim().toLowerCase();
+  if (normalized === "casual") return "freeform";
+  return MAGE_GAME_FORMATS.includes(
+    normalized as (typeof MAGE_GAME_FORMATS)[number]
+  )
+    ? normalized
+    : "";
+}
+
+function publicDeckFormatSources(
+  source: PublicDeckSource
+): PublicDeckFormatSource[] {
+  if (source === "all") return ["community", "official"];
+  return [source];
+}
+
+async function countPublicDeckFormatRows(
+  ctx: QueryCtx,
+  format: string,
+  source: PublicDeckFormatSource
+) {
+  let count = 0;
+  for await (const row of ctx.db
+    .query("publicDeckFormats")
+    .withIndex("by_format_source_random", (q) =>
+      q.eq("format", format).eq("source", source)
+    )) {
+    void row;
+    count += 1;
+  }
+  return count;
+}
+
+async function randomPublicDeckFormatRowFromSources(
+  ctx: QueryCtx,
+  format: string,
+  sources: PublicDeckFormatSource[],
+  seed: number
+) {
+  const counts = await Promise.all(
+    sources.map(async (source) => ({
+      source,
+      count: await countPublicDeckFormatRows(ctx, format, source),
+    }))
+  );
+  const total = counts.reduce((sum, item) => sum + item.count, 0);
+  if (total === 0) return null;
+
+  let index = Math.floor(seed * total);
+  for (const item of counts) {
+    if (index < item.count) {
+      return await randomPublicDeckFormatRow(ctx, format, item.source, seed);
+    }
+    index -= item.count;
+  }
+  return null;
+}
+
+async function randomPublicDeckFormatRow(
+  ctx: QueryCtx,
+  format: string,
+  source: PublicDeckFormatSource,
+  seed: number
+) {
+  const atOrAfterSeed = await ctx.db
+    .query("publicDeckFormats")
+    .withIndex("by_format_source_random", (q) =>
+      q.eq("format", format).eq("source", source).gte("randomKey", seed)
+    )
+    .first();
+  if (atOrAfterSeed) return atOrAfterSeed;
+
+  return await ctx.db
+    .query("publicDeckFormats")
+    .withIndex("by_format_source_random", (q) =>
+      q.eq("format", format).eq("source", source)
+    )
+    .first();
+}
+
+function normalizedRandomSeed(seed: number) {
+  if (!Number.isFinite(seed)) return Math.random();
+  return seed - Math.floor(seed);
+}
+
+async function deletePublicDeckFormatRows(ctx: MutationCtx, publicId: string) {
+  const rows = await ctx.db
+    .query("publicDeckFormats")
+    .withIndex("by_public_id", (q) => q.eq("publicId", publicId))
+    .collect();
+  for (const row of rows) {
+    await ctx.db.delete(row._id);
+  }
+}
+
+async function replacePublicDeckFormatRows(
+  ctx: MutationCtx,
+  deck: Doc<"userDecks"> | PublicDeckFormatOwner,
+  validFormats: string[],
+  updatedAt = deck.updatedAt
+) {
+  const publicId = publicIdForDeckFormatOwner(deck);
+  await deletePublicDeckFormatRows(ctx, publicId);
+  if (deck.isPublic === false) return;
+
+  const source = publicDeckFormatSourceForDeck(deck);
+  for (const format of normalizedValidFormats(validFormats)) {
+    await ctx.db.insert("publicDeckFormats", {
+      publicId,
+      userId: deck.userId,
+      deckId: deck.deckId,
+      format,
+      source,
+      randomKey: hashUnitInterval(`${format}:${publicId}`),
+      updatedAt,
+    });
+  }
+}
+
+type PublicDeckFormatOwner = {
+  userId: string;
+  deckId: string;
+  publicId: string;
+  isPublic?: boolean;
+  sourceType?: string;
+  updatedAt: number;
+};
+
+function publicIdForDeckFormatOwner(
+  deck: Doc<"userDecks"> | PublicDeckFormatOwner
+) {
+  return "_id" in deck ? publicIdForDeck(deck) : deck.publicId;
+}
+
+function publicDeckFormatSourceForDeck(
+  deck: Doc<"userDecks"> | PublicDeckFormatOwner
+): PublicDeckFormatSource {
+  return deck.userId === OFFICIAL_MTGJSON_USER_ID ||
+    deck.sourceType === OFFICIAL_MTGJSON_SOURCE_TYPE
+    ? "official"
+    : "community";
+}
+
+function hashUnitInterval(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) / 0x100000000;
+}
+
 function publicIdForNewDeck(userId: string, deckId: string, now: number) {
   return uuidFromString(`public-deck:${userId}:${deckId}:${now}`);
 }
@@ -1399,6 +1893,40 @@ async function getPublicDeckDoc(ctx: QueryCtx | MutationCtx, publicId: string) {
   return null;
 }
 
+async function publicDeckFromDoc(
+  ctx: QueryCtx,
+  deckDoc: Doc<"userDecks">,
+  viewerUserId?: string | null
+): Promise<PublicDeck> {
+  const publicId = publicIdForDeck(deckDoc);
+  const cards = deckCardRefs(deckDoc);
+  const sideboardCards = deckSideboardRefs(deckDoc);
+  const maybeboardCards = deckMaybeboardRefs(deckDoc);
+  const entries = await hydrateEntries(ctx, cards);
+  const sideboard = await hydrateEntries(ctx, sideboardCards);
+  const maybeboard = await hydrateEntries(ctx, maybeboardCards);
+
+  return {
+    id: temporaryPublicDeckId(publicId),
+    publicId,
+    ...(viewerUserId === deckDoc.userId ? { ownedDeckId: deckDoc.deckId } : {}),
+    isPublic: true,
+    name: deckDoc.name,
+    format: deckDoc.format,
+    cardCount: deckDoc.cardCount ?? countCards(cards),
+    sideboardCount: deckDoc.sideboardCount ?? countCards(sideboardCards),
+    maybeboardCount: deckDoc.maybeboardCount ?? countCards(maybeboardCards),
+    validFormats: validFormatsForDeckDoc(deckDoc),
+    createdAt: deckDoc.createdAt,
+    updatedAt: deckDoc.updatedAt,
+    entries,
+    sideboard,
+    maybeboard,
+    authorName: authorNameForDeck(deckDoc),
+    ...publicSourceMetadata(deckDoc),
+  };
+}
+
 async function publicDeckSummaryFromDoc(
   ctx: QueryCtx,
   deckDoc: Doc<"userDecks">,
@@ -1422,6 +1950,7 @@ async function publicDeckSummaryFromDoc(
     sideboardCount: deckDoc.sideboardCount ?? countCards(sideboardCards),
     maybeboardCount:
       deckDoc.maybeboardCount ?? countCards(maybeboardCards),
+    validFormats: validFormatsForDeckDoc(deckDoc),
     createdAt: deckDoc.createdAt,
     updatedAt: deckDoc.updatedAt,
     authorName: authorNameForDeck(deckDoc),
@@ -1819,12 +2348,21 @@ function clampPage(page: number | undefined) {
   return Math.max(1, Math.floor(page));
 }
 
+function clampBackfillLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return 25;
+  return Math.min(50, Math.max(1, Math.floor(limit)));
+}
+
 function normalizeSearchText(value: string) {
   return value
     .trim()
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function cardNameKey(name: string) {
+  return normalizeSearchText(name);
 }
 
 function anonymousAuthorName(userId: string) {
@@ -2065,16 +2603,26 @@ async function patchDeckRefs(
     sideboardCards: normalizedSideboard,
     maybeboardCards: normalizedMaybeboard,
   });
+  const cardCount = countCards(normalized);
+  const sideboardCount = countCards(normalizedSideboard);
+  const validFormats = await validFormatsForDeckRefs(ctx, {
+    cards: normalized,
+    sideboardCards: normalizedSideboard,
+    maybeboardCards: normalizedMaybeboard,
+  });
+  const updatedAt = Date.now();
   await ctx.db.patch(deckDoc._id, {
     cards: normalized,
     sideboardCards: normalizedSideboard,
     maybeboardCards: normalizedMaybeboard,
     ...cardMetadata,
-    cardCount: countCards(normalized),
-    sideboardCount: countCards(normalizedSideboard),
+    validFormats,
+    cardCount,
+    sideboardCount,
     maybeboardCount: countCards(normalizedMaybeboard),
-    updatedAt: Date.now(),
+    updatedAt,
   });
+  await replacePublicDeckFormatRows(ctx, deckDoc, validFormats, updatedAt);
 }
 
 function deckRefsForZone(
@@ -2203,6 +2751,11 @@ function sameStringRecord(
   const rightKeys = Object.keys(right);
   if (leftKeys.length !== rightKeys.length) return false;
   return rightKeys.every((key) => left[key] === right[key]);
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
 }
 
 function toUint8(value: number) {
